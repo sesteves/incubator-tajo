@@ -18,287 +18,320 @@
 
 package org.apache.tajo.engine.query;
 
-import com.google.gson.annotations.Expose;
-import org.apache.tajo.QueryUnitAttemptId;
-import org.apache.tajo.engine.MasterWorkerProtos.Fetch;
-import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProto;
-import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProtoOrBuilder;
-import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
-import org.apache.tajo.storage.Fragment;
-
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
+import org.apache.tajo.storage.Fragment;
+
+import com.google.gson.annotations.Expose;
 
 public class QueryUnitRequestImpl implements QueryUnitRequest {
-	
+
   @Expose
-	private QueryUnitAttemptId id;
+  private QueryUnitAttemptId id;
   @Expose
-	private List<Fragment> fragments;
+  private List<Fragment> fragments;
   @Expose
-	private String outputTable;
-	private boolean isUpdated;
-	@Expose
-	private boolean clusteredOutput;
-	@Expose
-	private String serializedData;     // logical node
-	@Expose
-	private Boolean interQuery;
-	@Expose
-	private List<Fetch> fetches;
+  private String outputTable;
+  private boolean isUpdated;
+  @Expose
+  private boolean clusteredOutput;
+  @Expose
+  private String serializedData; // logical node
+  @Expose
+  private Boolean interQuery;
+  @Expose
+  private List<Fetch> fetches;
   @Expose
   private Boolean shouldDie;
-	
-	private QueryUnitRequestProto proto = QueryUnitRequestProto.getDefaultInstance();
-	private QueryUnitRequestProto.Builder builder = null;
-	private boolean viaProto = false;
-	
-	public QueryUnitRequestImpl() {
-		builder = QueryUnitRequestProto.newBuilder();
-		this.id = null;
-		this.isUpdated = false;
-	}
-	
-	public QueryUnitRequestImpl(QueryUnitAttemptId id, List<Fragment> fragments,
-			String outputTable, boolean clusteredOutput, 
-			String serializedData) {
-		this();
-		this.set(id, fragments, outputTable, clusteredOutput, serializedData);
-	}
-	
-	public QueryUnitRequestImpl(QueryUnitRequestProto proto) {
-		this.proto = proto;
-		viaProto = true;
-		id = null;
-		isUpdated = false;
-	}
-	
-	public void set(QueryUnitAttemptId id, List<Fragment> fragments,
-			String outputTable, boolean clusteredOutput, 
-			String serializedData) {
-		this.id = id;
-		this.fragments = fragments;
-		this.outputTable = outputTable;
-		this.clusteredOutput = clusteredOutput;
-		this.serializedData = serializedData;
-		this.isUpdated = true;
-	}
+  @Expose
+  private List<Integer> joinKeys;
+  @Expose
+  private Map<Integer, Integer> histogram;
 
-	@Override
-	public QueryUnitRequestProto getProto() {
-		mergeLocalToProto();
-		proto = viaProto ? proto : builder.build();
-		viaProto = true;
-		return proto;
-	}
+  private QueryUnitRequestProto proto = QueryUnitRequestProto.getDefaultInstance();
+  private QueryUnitRequestProto.Builder builder = null;
+  private boolean viaProto = false;
 
-	@Override
-	public QueryUnitAttemptId getId() {
-		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-		if (id != null) {
-			return this.id;
-		}
-		if (!p.hasId()) {
-			return null;
-		}
-		this.id = new QueryUnitAttemptId(p.getId());
-		return this.id;
-	}
+  public QueryUnitRequestImpl() {
+	builder = QueryUnitRequestProto.newBuilder();
+	this.id = null;
+	this.isUpdated = false;
+  }
 
-	@Override
-	public List<Fragment> getFragments() {
-		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-		if (fragments != null) {
-			return fragments;
-		}
-		if (fragments == null) {
-			fragments = new ArrayList<Fragment>();
-		}
-		for (int i = 0; i < p.getFragmentsCount(); i++) {
-			fragments.add(new Fragment(p.getFragments(i)));
-		}
-		return this.fragments;
-	}
+  public QueryUnitRequestImpl(QueryUnitAttemptId id, List<Fragment> fragments, String outputTable,
+	  boolean clusteredOutput, String serializedData) {
+	this();
+	this.set(id, fragments, outputTable, clusteredOutput, serializedData);
+  }
 
-	@Override
-	public String getOutputTableId() {
-		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-		if (outputTable != null) {
-			return this.outputTable;
-		}
-		if (!p.hasOutputTable()) {
-			return null;
-		}
-		this.outputTable = p.getOutputTable();
-		return this.outputTable;
-	}
+  public QueryUnitRequestImpl(QueryUnitRequestProto proto) {
+	this.proto = proto;
+	viaProto = true;
+	id = null;
+	isUpdated = false;
+  }
 
-	@Override
-	public boolean isClusteredOutput() {
-		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-		if (isUpdated) {
-			return this.clusteredOutput;
-		}
-		if (!p.hasClusteredOutput()) {
-			return false;
-		}
-		this.clusteredOutput = p.getClusteredOutput();
-		this.isUpdated = true;
-		return this.clusteredOutput;
-	}
+  public void set(QueryUnitAttemptId id, List<Fragment> fragments, String outputTable, boolean clusteredOutput,
+	  String serializedData) {
+	this.id = id;
+	this.fragments = fragments;
+	this.outputTable = outputTable;
+	this.clusteredOutput = clusteredOutput;
+	this.serializedData = serializedData;
+	this.isUpdated = true;
+  }
 
-	@Override
-	public String getSerializedData() {
-		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-		if (this.serializedData != null) {
-			return this.serializedData;
-		}
-		if (!p.hasSerializedData()) {
-			return null;
-		}
-		this.serializedData = p.getSerializedData();
-		return this.serializedData;
-	}
-	
-	public boolean isInterQuery() {
-	  QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-    if (interQuery != null) {
-      return interQuery;
-    }
-    if (!p.hasInterQuery()) {
-      return false;
-    }
-    this.interQuery = p.getInterQuery();
-    return this.interQuery;
-	}
-	
-	public void setInterQuery() {
-	  maybeInitBuilder();
-	  this.interQuery = true;
-	}
-	
-	public void addFetch(String name, URI uri) {
-	  maybeInitBuilder();
-	  initFetches();
-	  fetches.add(
-	  Fetch.newBuilder()
-	    .setName(name)
-	    .setUrls(uri.toString()).build());
-	  
-	}
-	
-	public List<Fetch> getFetches() {
-	  initFetches();    
+  @Override
+  public QueryUnitRequestProto getProto() {
+	mergeLocalToProto();
+	proto = viaProto ? proto : builder.build();
+	viaProto = true;
+	return proto;
+  }
 
-    return this.fetches;
+  @Override
+  public QueryUnitAttemptId getId() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (id != null) {
+	  return this.id;
 	}
-	
-	private void initFetches() {
-	  if (this.fetches != null) {
-      return;
-    }
-    QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-    this.fetches = new ArrayList<Fetch>();
-    for(Fetch fetch : p.getFetchesList()) {
-      fetches.add(fetch);
-    }
+	if (!p.hasId()) {
+	  return null;
 	}
+	this.id = new QueryUnitAttemptId(p.getId());
+	return this.id;
+  }
+
+  @Override
+  public List<Fragment> getFragments() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (fragments != null) {
+	  return fragments;
+	}
+	if (fragments == null) {
+	  fragments = new ArrayList<Fragment>();
+	}
+	for (int i = 0; i < p.getFragmentsCount(); i++) {
+	  fragments.add(new Fragment(p.getFragments(i)));
+	}
+	return this.fragments;
+  }
+
+  @Override
+  public String getOutputTableId() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (outputTable != null) {
+	  return this.outputTable;
+	}
+	if (!p.hasOutputTable()) {
+	  return null;
+	}
+	this.outputTable = p.getOutputTable();
+	return this.outputTable;
+  }
+
+  @Override
+  public boolean isClusteredOutput() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (isUpdated) {
+	  return this.clusteredOutput;
+	}
+	if (!p.hasClusteredOutput()) {
+	  return false;
+	}
+	this.clusteredOutput = p.getClusteredOutput();
+	this.isUpdated = true;
+	return this.clusteredOutput;
+  }
+
+  @Override
+  public String getSerializedData() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (this.serializedData != null) {
+	  return this.serializedData;
+	}
+	if (!p.hasSerializedData()) {
+	  return null;
+	}
+	this.serializedData = p.getSerializedData();
+	return this.serializedData;
+  }
+
+  public boolean isInterQuery() {
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (interQuery != null) {
+	  return interQuery;
+	}
+	if (!p.hasInterQuery()) {
+	  return false;
+	}
+	this.interQuery = p.getInterQuery();
+	return this.interQuery;
+  }
+
+  public void setInterQuery() {
+	maybeInitBuilder();
+	this.interQuery = true;
+  }
+
+  public void addFetch(String name, URI uri) {
+	maybeInitBuilder();
+	initFetches();
+	fetches.add(Fetch.newBuilder().setName(name).setUrls(uri.toString()).build());
+
+  }
+
+  public List<Fetch> getFetches() {
+	initFetches();
+
+	return this.fetches;
+  }
+
+  private void initFetches() {
+	if (this.fetches != null) {
+	  return;
+	}
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	this.fetches = new ArrayList<Fetch>();
+	for (Fetch fetch : p.getFetchesList()) {
+	  fetches.add(fetch);
+	}
+  }
 
   @Override
   public boolean shouldDie() {
-    QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-    if (shouldDie != null) {
-      return shouldDie;
-    }
-    if (!p.hasShouldDie()) {
-      return false;
-    }
-    this.shouldDie = p.getShouldDie();
-    return this.shouldDie;
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (shouldDie != null) {
+	  return shouldDie;
+	}
+	if (!p.hasShouldDie()) {
+	  return false;
+	}
+	this.shouldDie = p.getShouldDie();
+	return this.shouldDie;
   }
 
   @Override
   public void setShouldDie() {
-    maybeInitBuilder();
-    shouldDie = true;
+	maybeInitBuilder();
+	shouldDie = true;
   }
 
   private void maybeInitBuilder() {
-		if (viaProto || builder == null) {
-			builder = QueryUnitRequestProto.newBuilder(proto);
-		}
-		viaProto = true;
+	if (viaProto || builder == null) {
+	  builder = QueryUnitRequestProto.newBuilder(proto);
 	}
-	
-	private void mergeLocalToBuilder() {
-		if (id != null) {
-			builder.setId(this.id.getProto());
-		}
-		if (fragments != null) {
-			for (int i = 0; i < fragments.size(); i++) {
-				builder.addFragments(fragments.get(i).getProto());
-			}
-		}
-		if (this.outputTable != null) {
-			builder.setOutputTable(this.outputTable);
-		}
-		if (this.isUpdated) {
-			builder.setClusteredOutput(this.clusteredOutput);
-		}
-		if (this.serializedData != null) {
-			builder.setSerializedData(this.serializedData);
-		}
-		if (this.interQuery != null) {
-		  builder.setInterQuery(this.interQuery);
-		}
-		if (this.fetches != null) {
-		  builder.addAllFetches(this.fetches);
-		}
-    if (this.shouldDie != null) {
-      builder.setShouldDie(this.shouldDie);
-    }
-	}
+	viaProto = true;
+  }
 
-	private void mergeLocalToProto() {
-		if(viaProto) {
-			maybeInitBuilder();
-		}
-		mergeLocalToBuilder();
-		proto = builder.build();
-		viaProto = true;
+  private void mergeLocalToBuilder() {
+	if (id != null) {
+	  builder.setId(this.id.getProto());
 	}
+	if (fragments != null) {
+	  for (int i = 0; i < fragments.size(); i++) {
+		builder.addFragments(fragments.get(i).getProto());
+	  }
+	}
+	if (this.outputTable != null) {
+	  builder.setOutputTable(this.outputTable);
+	}
+	if (this.isUpdated) {
+	  builder.setClusteredOutput(this.clusteredOutput);
+	}
+	if (this.serializedData != null) {
+	  builder.setSerializedData(this.serializedData);
+	}
+	if (this.interQuery != null) {
+	  builder.setInterQuery(this.interQuery);
+	}
+	if (this.fetches != null) {
+	  builder.addAllFetches(this.fetches);
+	}
+	if (this.shouldDie != null) {
+	  builder.setShouldDie(this.shouldDie);
+	}
+  }
+
+  private void mergeLocalToProto() {
+	if (viaProto) {
+	  maybeInitBuilder();
+	}
+	mergeLocalToBuilder();
+	proto = builder.build();
+	viaProto = true;
+  }
 
   @Override
   public void initFromProto() {
-    QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-    if (id == null && p.hasId()) {
-      this.id = new QueryUnitAttemptId(p.getId());
-    }
-    if (fragments == null && p.getFragmentsCount() > 0) {
-      this.fragments = new ArrayList<Fragment>();
-      for (int i = 0; i < p.getFragmentsCount(); i++) {
-        this.fragments.add(new Fragment(p.getFragments(i)));
-      }
-    }
-    if (outputTable == null && p.hasOutputTable()) {
-      this.outputTable = p.getOutputTable();
-    }
-    if (isUpdated == false && p.hasClusteredOutput()) {
-      this.clusteredOutput = p.getClusteredOutput();
-    }
-    if (serializedData == null && p.hasSerializedData()) {
-      this.serializedData = p.getSerializedData();
-    }
-    if (interQuery == null && p.hasInterQuery()) {
-      this.interQuery = p.getInterQuery();
-    }
-    if (fetches == null && p.getFetchesCount() > 0) {
-      this.fetches = p.getFetchesList();
-    }
-    if (shouldDie == null && p.getShouldDie()) {
-      this.shouldDie = true;
-    }
+	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	if (id == null && p.hasId()) {
+	  this.id = new QueryUnitAttemptId(p.getId());
+	}
+	if (fragments == null && p.getFragmentsCount() > 0) {
+	  this.fragments = new ArrayList<Fragment>();
+	  for (int i = 0; i < p.getFragmentsCount(); i++) {
+		this.fragments.add(new Fragment(p.getFragments(i)));
+	  }
+	}
+	if (outputTable == null && p.hasOutputTable()) {
+	  this.outputTable = p.getOutputTable();
+	}
+	if (isUpdated == false && p.hasClusteredOutput()) {
+	  this.clusteredOutput = p.getClusteredOutput();
+	}
+	if (serializedData == null && p.hasSerializedData()) {
+	  this.serializedData = p.getSerializedData();
+	}
+	if (interQuery == null && p.hasInterQuery()) {
+	  this.interQuery = p.getInterQuery();
+	}
+	if (fetches == null && p.getFetchesCount() > 0) {
+	  this.fetches = p.getFetchesList();
+	}
+	if (shouldDie == null && p.getShouldDie()) {
+	  this.shouldDie = true;
+	}
   }
-  
+
+  @Override
+  public void setJoinKeys(List<Integer> joinKeys) {
+	this.joinKeys = joinKeys;
+  }
+
+  @Override
+  public List<Integer> getJoinKeys() {
+	if (joinKeys == null) {
+	  QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	  joinKeys = new ArrayList<Integer>();
+	  for (Integer i : p.getJoinKeysList()) {
+		joinKeys.add(i);
+	  }
+	}
+	return joinKeys;
+  }
+
+  @Override
+  public void setHistogram(Map<Integer, Integer> histogram) {
+	this.histogram = histogram;
+  }
+
+  @Override
+  public Map<Integer, Integer> getHistogram() {
+	if (histogram == null) {
+	  QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+	  this.histogram = new TreeMap<Integer, Integer>();
+	  for (KeyValue kv : p.getHistogramList()) {
+		histogram.put(kv.getKey(), kv.getValue());
+	  }
+	}
+	return histogram;
+  }
+
 }

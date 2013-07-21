@@ -56,6 +56,13 @@ message QueryUnitRequestProto {
     optional bool interQuery = 6 [default = false];
     repeated Fetch fetches = 7;
     optional bool shouldDie = 8;
+    repeated int32 joinKeys = 9;
+    repeated KeyValue joinHistogram = 10;        
+}
+
+message KeyValue {
+  required int32 key = 1;
+  required int64 value = 2;
 }
 
 message Fetch {

@@ -168,6 +168,7 @@ message TableStatProto {
   optional int32 numPartitions = 4;
   optional int64 avgRows = 5;
   repeated ColumnStatProto colStat = 6;
+  repeated KeyValue histogram = 7;
 }
 
 message ColumnStatProto {
@@ -176,6 +177,11 @@ message ColumnStatProto {
   optional int64 numNulls = 3;
   optional bytes minValue = 4;
   optional bytes maxValue = 5;
+}
+
+message KeyValue {
+  required int32 key = 1;
+  required int32 value = 2;
 }
 
 enum StatType {

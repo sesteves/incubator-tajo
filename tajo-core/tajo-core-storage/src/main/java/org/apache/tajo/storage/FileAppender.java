@@ -18,12 +18,13 @@
 
 package org.apache.tajo.storage;
 
+import java.io.IOException;
+import java.util.List;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-
-import java.io.IOException;
 
 public abstract class FileAppender implements Appender {
   protected boolean inited = false;
@@ -34,27 +35,33 @@ public abstract class FileAppender implements Appender {
   protected final Path path;
 
   protected boolean enabledStats;
-  
+
+  protected List<Integer> joinKeys;
+
   public FileAppender(Configuration conf, TableMeta meta, Path path) {
-    this.conf = conf;
-    this.meta = meta;
-    this.schema = meta.getSchema();
-    this.path = path;
+	this.conf = conf;
+	this.meta = meta;
+	this.schema = meta.getSchema();
+	this.path = path;
   }
 
   public void init() throws IOException {
-    if (inited) {
-     throw new IllegalStateException("FileAppender is already initialized.");
-    }
-    inited = true;
+	if (inited) {
+	  throw new IllegalStateException("FileAppender is already initialized.");
+	}
+	inited = true;
   }
 
   public void enableStats() {
-    if (inited) {
-      throw new IllegalStateException("Should enable this option before init()");
-    }
+	if (inited) {
+	  throw new IllegalStateException("Should enable this option before init()");
+	}
 
-    this.enabledStats = true;
+	this.enabledStats = true;
+  }
+
+  public void setJoinKeys(List<Integer> joinKeys) {
+	this.joinKeys = joinKeys;
   }
 
   public abstract long getOffset() throws IOException;
