@@ -66,7 +66,7 @@ public class ExecutionBlock {
   private boolean hasUnionPlan;
   private List<Column[]> joinKeyPairs = null;
   // histogram that is maintained for the smaller relation of a join
-  private Map<Integer, Integer> histogram = null;
+  private Map<Integer, Long> histogram = null;
 
   public ExecutionBlock(SubQueryId subQueryId) {
 	this.subQueryId = subQueryId;
@@ -202,11 +202,11 @@ public class ExecutionBlock {
 	return joinKeyPairs;
   }
 
-  public Map<Integer, Integer> getHistogram() {
+  public Map<Integer, Long> getHistogram() {
 	return histogram;
   }
 
-  public void setHistogram(Map<Integer, Integer> histogram) {
+  public void setHistogram(Map<Integer, Long> histogram) {
 	this.histogram = histogram;
   }
 }

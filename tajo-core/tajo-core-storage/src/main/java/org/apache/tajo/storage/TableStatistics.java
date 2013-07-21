@@ -22,10 +22,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import org.apache.derby.iapi.types.DataType;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.statistics.ColumnStat;
 import org.apache.tajo.catalog.statistics.TableStat;
+import org.apache.tajo.common.TajoDataTypes;
+import org.apache.tajo.common.TajoDataTypes.DataType;
+import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
 
@@ -33,128 +35,129 @@ import org.apache.tajo.datum.NullDatum;
  * This class is not thread-safe.
  */
 public class TableStatistics {
-    private final static int HISTOGRAM_GRANULARITY = 100;
+  private final static int HISTOGRAM_GRANULARITY = 100;
 
-    private Schema schema;
-    private Tuple minValues;
-    private Tuple maxValues;
-    private long[] numNulls;
-    private long numRows = 0;
-    private long numBytes = 0;
+  private Schema schema;
+  private Tuple minValues;
+  private Tuple maxValues;
+  private long[] numNulls;
+  private long numRows = 0;
+  private long numBytes = 0;
 
-    private boolean[] comparable;
+  private boolean[] comparable;
 
-    private List<Integer> joinKeys;
+  private List<Integer> joinKeys;
 
-    private Map<Integer, Integer> histogram;
+  private Map<Integer, Long> histogram;
 
-    private int tupleSize = 0;
+  private long tupleSize = 0;
 
-    private Tuple keyTuple;
+  private Tuple keyTuple;
 
-    public TableStatistics(Schema schema) {
-        this.schema = schema;
-        minValues = new VTuple(schema.getColumnNum());
-        maxValues = new VTuple(schema.getColumnNum());
-        /*
-         * for (int i = 0; i < schema.getColumnNum(); i++) { minValues[i] = Long.MAX_VALUE; maxValues[i] = Long.MIN_VALUE; }
-         */
+  public TableStatistics(Schema schema) {
+	this.schema = schema;
+	minValues = new VTuple(schema.getColumnNum());
+	maxValues = new VTuple(schema.getColumnNum());
+	/*
+	 * for (int i = 0; i < schema.getColumnNum(); i++) { minValues[i] =
+	 * Long.MAX_VALUE; maxValues[i] = Long.MIN_VALUE; }
+	 */
 
-        numNulls = new long[schema.getColumnNum()];
-        comparable = new boolean[schema.getColumnNum()];
+	numNulls = new long[schema.getColumnNum()];
+	comparable = new boolean[schema.getColumnNum()];
 
-        DataType type;
-        for (int i = 0; i < schema.getColumnNum(); i++) {
-            type = schema.getColumn(i).getDataType();
-            if (type.getType() == Type.ARRAY) {
-                comparable[i] = false;
-            } else {
-                comparable[i] = true;
-            }
-        }
-    }
+	DataType type;
+	for (int i = 0; i < schema.getColumnNum(); i++) {
+	  type = schema.getColumn(i).getDataType();
+	  if (type.getType() == Type.ARRAY) {
+		comparable[i] = false;
+	  } else {
+		comparable[i] = true;
+	  }
+	}
+  }
 
-    public Schema getSchema() {
-        return this.schema;
-    }
+  public Schema getSchema() {
+	return this.schema;
+  }
 
-    public void incrementRow() {
-        numRows++;
-    }
+  public void incrementRow() {
+	numRows++;
+  }
 
-    public long getNumRows() {
-        return this.numRows;
-    }
+  public long getNumRows() {
+	return this.numRows;
+  }
 
-    public void setNumBytes(long bytes) {
-        this.numBytes = bytes;
-    }
+  public void setNumBytes(long bytes) {
+	this.numBytes = bytes;
+  }
 
-    public long getNumBytes() {
-        return this.numBytes;
-    }
+  public long getNumBytes() {
+	return this.numBytes;
+  }
 
-    public void analyzeField(int idx, Datum datum) {
-        if (datum instanceof NullDatum) {
-            numNulls[idx]++;
-            return;
-        }
+  public void analyzeField(int idx, Datum datum) {
+	if (datum instanceof NullDatum) {
+	  numNulls[idx]++;
+	  return;
+	}
 
-        if (datum.type() != TajoDataTypes.Type.ARRAY) {
-            if (comparable[idx]) {
-                if (!maxValues.contains(idx) || maxValues.get(idx).compareTo(datum) < 0) {
-                    maxValues.put(idx, datum);
-                }
-                if (!minValues.contains(idx) || minValues.get(idx).compareTo(datum) > 0) {
-                    minValues.put(idx, datum);
-                }
-            }
-        }
+	if (datum.type() != TajoDataTypes.Type.ARRAY) {
+	  if (comparable[idx]) {
+		if (!maxValues.contains(idx) || maxValues.get(idx).compareTo(datum) < 0) {
+		  maxValues.put(idx, datum);
+		}
+		if (!minValues.contains(idx) || minValues.get(idx).compareTo(datum) > 0) {
+		  minValues.put(idx, datum);
+		}
+	  }
+	}
 
-        tupleSize += datum.size();
-        if (joinKeys != null) {
-            if (joinKeys.contains(idx)) {
-                keyTuple.put(idx, datum);
-            }
+	tupleSize += datum.size();
+	if (joinKeys != null) {
+	  if (joinKeys.contains(idx)) {
+		keyTuple.put(idx, datum);
+	  }
 
-            if (idx == schema.getColumnNum() - 1) {
-                int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
+	  if (idx == schema.getColumnNum() - 1) {
+		int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
 
-                Integer accumulated = histogram.get(key);
-                if (accumulated != null) {
-                    histogram.put(key, accumulated + tupleSize);
-                } else {
-                    histogram.put(key, tupleSize);
-                }
+		Long accumulated = histogram.get(key);
+		if (accumulated != null) {
+		  histogram.put(key, accumulated + tupleSize);
+		} else {
+		  histogram.put(key, tupleSize);
+		}
 
-                keyTuple.clear();
-                tupleSize = 0;
-            }
-        }
-    }
+		keyTuple.clear();
+		tupleSize = 0;
+	  }
+	}
+  }
 
-    public TableStat getTableStat() {
-        TableStat stat = new TableStat();
+  public TableStat getTableStat() {
+	TableStat stat = new TableStat();
 
-        ColumnStat columnStat;
-        for (int i = 0; i < schema.getColumnNum(); i++) {
-            columnStat = new ColumnStat(schema.getColumn(i));
-            columnStat.setNumNulls(numNulls[i]);
-            columnStat.setMinValue(minValues.get(i));
-            columnStat.setMaxValue(maxValues.get(i));
-            stat.addColumnStat(columnStat);
-        }
+	ColumnStat columnStat;
+	for (int i = 0; i < schema.getColumnNum(); i++) {
+	  columnStat = new ColumnStat(schema.getColumn(i));
+	  columnStat.setNumNulls(numNulls[i]);
+	  columnStat.setMinValue(minValues.get(i));
+	  columnStat.setMaxValue(maxValues.get(i));
+	  stat.addColumnStat(columnStat);
+	}
 
-        stat.setNumRows(this.numRows);
-        stat.setNumBytes(this.numBytes);
-        stat.setHistogram(this.histogram);
+	stat.setNumRows(this.numRows);
+	stat.setNumBytes(this.numBytes);
+	stat.setHistogram(this.histogram);
 
-        return stat;
-    }
+	return stat;
+  }
 
-    public void setJoinKeys(List<Integer> joinKeys) {
-        this.joinKeys = joinKeys;
-        keyTuple = new VTuple(joinKeys.size());
-        histogram = new TreeMap<Integer, Integer>();
-    }
+  public void setJoinKeys(List<Integer> joinKeys) {
+	this.joinKeys = joinKeys;
+	keyTuple = new VTuple(joinKeys.size());
+	histogram = new TreeMap<Integer, Long>();
+  }
 }

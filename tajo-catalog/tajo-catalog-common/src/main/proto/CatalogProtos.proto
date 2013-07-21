@@ -181,7 +181,7 @@ message ColumnStatProto {
 
 message KeyValue {
   required int32 key = 1;
-  required int32 value = 2;
+  required int64 value = 2;
 }
 
 enum StatType {

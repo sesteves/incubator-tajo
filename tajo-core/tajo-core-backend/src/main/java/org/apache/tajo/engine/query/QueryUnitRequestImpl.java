@@ -25,6 +25,10 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.engine.MasterWorkerProtos.Fetch;
+import org.apache.tajo.engine.MasterWorkerProtos.KeyValue;
+import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProto;
+import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProtoOrBuilder;
 import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
 import org.apache.tajo.storage.Fragment;
 
@@ -52,7 +56,7 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
   @Expose
   private List<Integer> joinKeys;
   @Expose
-  private Map<Integer, Integer> histogram;
+  private Map<Integer, Long> histogram;
 
   private QueryUnitRequestProto proto = QueryUnitRequestProto.getDefaultInstance();
   private QueryUnitRequestProto.Builder builder = null;
@@ -318,15 +322,15 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
   }
 
   @Override
-  public void setHistogram(Map<Integer, Integer> histogram) {
+  public void setHistogram(Map<Integer, Long> histogram) {
 	this.histogram = histogram;
   }
 
   @Override
-  public Map<Integer, Integer> getHistogram() {
+  public Map<Integer, Long> getHistogram() {
 	if (histogram == null) {
 	  QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-	  this.histogram = new TreeMap<Integer, Integer>();
+	  this.histogram = new TreeMap<Integer, Long>();
 	  for (KeyValue kv : p.getHistogramList()) {
 		histogram.put(kv.getKey(), kv.getValue());
 	  }

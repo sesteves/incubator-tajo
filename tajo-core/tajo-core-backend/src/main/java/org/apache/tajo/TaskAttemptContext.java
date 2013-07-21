@@ -31,6 +31,7 @@ import java.util.concurrent.CountDownLatch;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.storage.Fragment;
@@ -59,7 +60,7 @@ public class TaskAttemptContext {
   private boolean interQuery = false;
   private Path outputPath;
   private List<Integer> joinKeys;
-  private Map<Integer, Integer> histogram;
+  private Map<Integer, Long> histogram;
 
   public TaskAttemptContext(TajoConf conf, final QueryUnitAttemptId queryId, final Fragment[] fragments,
 	  final Path workDir) {
@@ -223,11 +224,11 @@ public class TaskAttemptContext {
 	this.joinKeys = joinKeys;
   }
 
-  public Map<Integer, Integer> getHistogram() {
+  public Map<Integer, Long> getHistogram() {
 	return histogram;
   }
 
-  public void setHistogram(Map<Integer, Integer> histogram) {
+  public void setHistogram(Map<Integer, Long> histogram) {
 	this.histogram = histogram;
   }
 

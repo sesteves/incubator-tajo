@@ -27,6 +27,8 @@ import java.util.Map;
 
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.common.ProtoObject;
+import org.apache.tajo.engine.MasterWorkerProtos.Fetch;
+import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProto;
 import org.apache.tajo.storage.Fragment;
 
 public interface QueryUnitRequest extends ProtoObject<QueryUnitRequestProto> {
@@ -57,8 +59,8 @@ public interface QueryUnitRequest extends ProtoObject<QueryUnitRequestProto> {
 
   public void setJoinKeys(List<Integer> joinKeys);
 
-  public void setHistogram(Map<Integer, Integer> histogram);
+  public void setHistogram(Map<Integer, Long> histogram);
 
-  public Map<Integer, Integer> getHistogram();
+  public Map<Integer, Long> getHistogram();
 
 }
