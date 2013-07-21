@@ -20,6 +20,7 @@ package org.apache.tajo.storage;
 
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import org.apache.derby.iapi.types.DataType;
 import org.apache.tajo.catalog.Schema;
@@ -32,6 +33,8 @@ import org.apache.tajo.datum.NullDatum;
  * This class is not thread-safe.
  */
 public class TableStatistics {
+    private final static int HISTOGRAM_GRANULARITY = 100;
+
     private Schema schema;
     private Tuple minValues;
     private Tuple maxValues;
@@ -43,7 +46,11 @@ public class TableStatistics {
 
     private List<Integer> joinKeys;
 
-    private Map<Tuple, Integer> histogram;
+    private Map<Integer, Integer> histogram;
+
+    private int tupleSize = 0;
+
+    private Tuple keyTuple;
 
     public TableStatistics(Schema schema) {
         this.schema = schema;
@@ -103,6 +110,27 @@ public class TableStatistics {
                 }
             }
         }
+
+        tupleSize += datum.size();
+        if (joinKeys != null) {
+            if (joinKeys.contains(idx)) {
+                keyTuple.put(idx, datum);
+            }
+
+            if (idx == schema.getColumnNum() - 1) {
+                int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
+
+                Integer accumulated = histogram.get(key);
+                if (accumulated != null) {
+                    histogram.put(key, accumulated + tupleSize);
+                } else {
+                    histogram.put(key, tupleSize);
+                }
+
+                keyTuple.clear();
+                tupleSize = 0;
+            }
+        }
     }
 
     public TableStat getTableStat() {
@@ -119,11 +147,14 @@ public class TableStatistics {
 
         stat.setNumRows(this.numRows);
         stat.setNumBytes(this.numBytes);
+        stat.setHistogram(this.histogram);
 
         return stat;
     }
 
     public void setJoinKeys(List<Integer> joinKeys) {
         this.joinKeys = joinKeys;
+        keyTuple = new VTuple(joinKeys.size());
+        histogram = new TreeMap<Integer, Integer>();
     }
 }
