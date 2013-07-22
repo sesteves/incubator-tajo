@@ -35,6 +35,7 @@ import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.engine.planner.logical.StoreTableNode;

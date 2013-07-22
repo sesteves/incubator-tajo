@@ -42,10 +42,12 @@ import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.SubQueryId;
 import org.apache.tajo.catalog.Column;
+import org.apache.tajo.engine.MasterWorkerProtos;
 import org.apache.tajo.engine.planner.JoinType;
 import org.apache.tajo.engine.planner.logical.JoinNode;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.logical.ScanNode;
+import org.apache.tajo.engine.planner.logical.UnaryNode;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
 import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
 import org.apache.tajo.master.QueryMaster.QueryContext;
@@ -380,7 +382,7 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 	  ExecutionBlock parent = executionBlock.getParentBlock();
 
 	  if (parent.hasJoin()) {
-		JoinNode joinNode = (JoinNode) parent.getPlan();
+		JoinNode joinNode = (JoinNode) ((UnaryNode) parent.getPlan()).getSubNode();
 		if (joinNode.getJoinType() == JoinType.INNER) {
 
 		  LogicalNode node = executionBlock.getPlan();
@@ -394,6 +396,7 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 		  return joinKeys;
 		}
 	  }
+	  return null;
 	}
 
 	public void assignToNonLeafTasks(List<TaskRequestEvent> taskRequests) {
