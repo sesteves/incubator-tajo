@@ -261,6 +261,17 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	if (this.shouldDie != null) {
 	  builder.setShouldDie(this.shouldDie);
 	}
+	if (this.joinKeys != null) {
+	  builder.addAllJoinKeys(this.joinKeys);
+	}
+	if (this.histogram != null) {
+	  for (int key : histogram.keySet()) {
+		org.apache.tajo.engine.MasterWorkerProtos.KeyValue.Builder kvBuilder = KeyValue.newBuilder();
+		kvBuilder.setKey(key);
+		kvBuilder.setValue(histogram.get(key));
+		builder.addHistogram(kvBuilder.build());
+	  }
+	}
   }
 
   private void mergeLocalToProto() {
@@ -302,6 +313,13 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	if (shouldDie == null && p.getShouldDie()) {
 	  this.shouldDie = true;
 	}
+	if (joinKeys == null && p.getJoinKeysCount() > 0) {
+	  this.joinKeys = p.getJoinKeysList();
+	}
+	if (histogram == null && p.getHistogramCount() > 0) {
+	  this.histogram = getHistogram();
+	}
+
   }
 
   @Override

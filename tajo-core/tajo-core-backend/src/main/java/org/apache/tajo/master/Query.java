@@ -301,7 +301,7 @@ public class Query implements EventHandler<QueryEvent> {
 
 		  SubQuerySucceeEvent succeeEvent = (SubQuerySucceeEvent) event;
 
-		  if (succeeEvent.getTableMeta().getStat().getHistogram().size() > 0) {
+		  if (succeeEvent.getTableMeta().getStat().getHistogram() != null) {
 			((SubQuerySucceeEvent) event).getTableMeta().getStat().getNumBytes();
 			nextExecutionBlock.setHistogram(((SubQuerySucceeEvent) event).getTableMeta().getStat().getHistogram());
 		  }

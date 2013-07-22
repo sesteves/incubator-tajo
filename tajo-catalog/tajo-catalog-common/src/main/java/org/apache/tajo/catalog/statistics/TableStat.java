@@ -24,8 +24,11 @@ package org.apache.tajo.catalog.statistics;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import org.apache.tajo.catalog.proto.CatalogProtos.ColumnStatProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue;
+import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue.Builder;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProtoOrBuilder;
 import org.apache.tajo.common.ProtoObject;
@@ -286,12 +289,25 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable {
 		builder.addColStat(colStat.getProto());
 	  }
 	}
+	if (this.histogram != null) {
+	  for (int key : histogram.keySet()) {
+		Builder kvBuilder = KeyValue.newBuilder();
+		kvBuilder.setKey(key);
+		kvBuilder.setValue(histogram.get(key));
+		builder.addHistogram(kvBuilder.build());
+	  }
+	}
   }
 
   public Map<Integer, Long> getHistogram() {
-	// TODO
-
-	return null;
+	if (histogram == null) {
+	  TableStatProtoOrBuilder p = viaProto ? proto : builder;
+	  this.histogram = new TreeMap<Integer, Long>();
+	  for (KeyValue kv : p.getHistogramList()) {
+		histogram.put(kv.getKey(), kv.getValue());
+	  }
+	}
+	return histogram;
   }
 
   public void setHistogram(Map<Integer, Long> histogram) {

@@ -354,7 +354,9 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 
 		  ExecutionBlock executionBlock = context.getQuery().getExecutionBlockCursor().peek();
 		  taskAssign.setJoinKeys(getJoinKeys(executionBlock));
-		  if (executionBlock.hasJoin() && ((JoinNode) executionBlock.getPlan()).getJoinType() == JoinType.INNER) {
+
+		  if (executionBlock.hasJoin()
+			  && ((JoinNode) ((UnaryNode) executionBlock.getPlan()).getSubNode()).getJoinType() == JoinType.INNER) {
 			taskAssign.setHistogram(executionBlock.getHistogram());
 		  }
 
@@ -381,7 +383,7 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 	private List<Integer> getJoinKeys(ExecutionBlock executionBlock) {
 	  ExecutionBlock parent = executionBlock.getParentBlock();
 
-	  if (parent.hasJoin()) {
+	  if (parent != null && parent.hasJoin()) {
 		JoinNode joinNode = (JoinNode) ((UnaryNode) parent.getPlan()).getSubNode();
 		if (joinNode.getJoinType() == JoinType.INNER) {
 
