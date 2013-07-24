@@ -48,6 +48,7 @@ import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.catalog.TableDescImpl;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
+import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.engine.json.GsonCreator;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.ExprType;
@@ -286,6 +287,9 @@ public class Query implements EventHandler<QueryEvent> {
 
   public static class SubQueryCompletedTransition implements MultipleArcTransition<Query, QueryEvent, QueryState> {
 
+	private Long histogramBytes = Long.MAX_VALUE;
+	private Map<Integer, Long> histogram;
+
 	@Override
 	public QueryState transition(Query query, QueryEvent event) {
 	  // increase the count for completed subqueries
@@ -299,11 +303,16 @@ public class Query implements EventHandler<QueryEvent> {
 		  ExecutionBlock nextExecutionBlock = cursor.nextBlock();
 		  SubQuery nextSubQuery = new SubQuery(query.context, nextExecutionBlock, query.sm);
 
-		  SubQuerySucceeEvent succeeEvent = (SubQuerySucceeEvent) event;
+		  TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
+		  if (tableStat.getHistogram().size() > 0 && tableStat.getNumBytes() < histogramBytes) {
+			histogram = tableStat.getHistogram();
+			histogramBytes = tableStat.getNumBytes();
+		  }
 
-		  if (succeeEvent.getTableMeta().getStat().getHistogram() != null) {
-			((SubQuerySucceeEvent) event).getTableMeta().getStat().getNumBytes();
-			nextExecutionBlock.setHistogram(((SubQuerySucceeEvent) event).getTableMeta().getStat().getHistogram());
+		  if (nextExecutionBlock.hasJoin() && histogram != null) {
+			nextExecutionBlock.setHistogram(histogram);
+			histogramBytes = Long.MAX_VALUE;
+			histogram = null;
 		  }
 
 		  nextSubQuery.setPriority(query.priority--);

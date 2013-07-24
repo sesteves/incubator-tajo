@@ -317,7 +317,7 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	  this.joinKeys = p.getJoinKeysList();
 	}
 	if (histogram == null && p.getHistogramCount() > 0) {
-	  this.histogram = getHistogram();
+	  getHistogram();
 	}
 
   }

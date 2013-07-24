@@ -79,7 +79,9 @@ public class CSVFile {
 
 	  if (enabledStats) {
 		this.stats = new TableStatistics(this.schema);
-		this.stats.setJoinKeys(joinKeys);
+		if (joinKeys != null && joinKeys.size() > 0) {
+		  this.stats.setJoinKeys(joinKeys);
+		}
 	  }
 
 	  super.init();

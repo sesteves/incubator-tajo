@@ -54,6 +54,8 @@ public class TableStatistics {
 
   private Tuple keyTuple;
 
+  private int keyTupleIdx = 0;
+
   public TableStatistics(Schema schema) {
 	this.schema = schema;
 	minValues = new VTuple(schema.getColumnNum());
@@ -117,7 +119,7 @@ public class TableStatistics {
 	tupleSize += datum.size();
 	if (joinKeys != null) {
 	  if (joinKeys.contains(idx)) {
-		keyTuple.put(idx, datum);
+		keyTuple.put(keyTupleIdx++, datum);
 	  }
 
 	  if (idx == schema.getColumnNum() - 1) {
@@ -130,6 +132,7 @@ public class TableStatistics {
 		  histogram.put(key, tupleSize);
 		}
 
+		keyTupleIdx = 0;
 		keyTuple.clear();
 		tupleSize = 0;
 	  }

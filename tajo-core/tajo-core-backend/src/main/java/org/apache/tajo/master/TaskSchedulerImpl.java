@@ -352,13 +352,8 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 		  QueryUnitRequest taskAssign = new QueryUnitRequestImpl(attemptId, new ArrayList<Fragment>(
 			  task.getAllFragments()), task.getOutputName(), false, task.getLogicalPlan().toJSON());
 
-		  ExecutionBlock executionBlock = context.getQuery().getExecutionBlockCursor().peek();
+		  ExecutionBlock executionBlock = context.getQuery().getSubQuery(attemptId.getSubQueryId()).getBlock();
 		  taskAssign.setJoinKeys(getJoinKeys(executionBlock));
-
-		  if (executionBlock.hasJoin()
-			  && ((JoinNode) ((UnaryNode) executionBlock.getPlan()).getSubNode()).getJoinType() == JoinType.INNER) {
-			taskAssign.setHistogram(executionBlock.getHistogram());
-		  }
 
 		  if (task.getStoreTableNode().isLocal()) {
 			taskAssign.setInterQuery();
@@ -419,6 +414,13 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 		  task = context.getSubQuery(attemptId.getSubQueryId()).getQueryUnit(attemptId.getQueryUnitId());
 		  QueryUnitRequest taskAssign = new QueryUnitRequestImpl(attemptId, Lists.newArrayList(task.getAllFragments()),
 			  task.getOutputName(), false, task.getLogicalPlan().toJSON());
+
+		  ExecutionBlock executionBlock = context.getSubQuery(attemptId.getSubQueryId()).getBlock();
+		  if (executionBlock.hasJoin()
+			  && ((JoinNode) ((UnaryNode) executionBlock.getPlan()).getSubNode()).getJoinType() == JoinType.INNER) {
+			taskAssign.setHistogram(executionBlock.getHistogram());
+		  }
+
 		  if (task.getStoreTableNode().isLocal()) {
 			taskAssign.setInterQuery();
 		  }

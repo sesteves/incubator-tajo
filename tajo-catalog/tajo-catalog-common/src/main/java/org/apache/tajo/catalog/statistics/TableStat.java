@@ -252,6 +252,9 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable {
 	for (ColumnStat col : columnStats) {
 	  col.initFromProto();
 	}
+	if (this.histogram == null && p.getHistogramCount() > 0) {
+	  getHistogram();
+	}
   }
 
   @Override
