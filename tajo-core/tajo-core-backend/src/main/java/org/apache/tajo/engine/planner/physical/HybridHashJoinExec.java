@@ -32,8 +32,10 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.engine.eval.EvalContext;
 import org.apache.tajo.engine.eval.EvalNode;
 import org.apache.tajo.engine.planner.PlannerUtil;
+import org.apache.tajo.engine.planner.Projector;
 import org.apache.tajo.engine.planner.logical.JoinNode;
 import org.apache.tajo.engine.utils.SchemaUtil;
+import org.apache.tajo.storage.FrameTuple;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.VTuple;
 
@@ -46,17 +48,19 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private JoinNode plan;
   private EvalNode joinQual;
+  private FrameTuple frameTuple = new FrameTuple();
+  private Tuple outTuple;
 
   private List<Column[]> joinKeyPairs;
 
   private EvalContext qualCtx;
-  private boolean first = true;
 
   private Map<Tuple, List<Tuple>> tupleSlots;
 
   private int[] outerKeyList;
   private int[] innerKeyList;
 
+  private Tuple outerTuple;
   private VTuple outerKeyTuple;
 
   List<ByteBuffer> innerBucketBuffers;
@@ -64,11 +68,20 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private int currentBucket;
   private Iterator<Tuple> iterator;
   private boolean foundMatch = false;
+
+  // projection
+  private final Projector projector;
+  private final EvalContext[] evalContexts;
+
   private int step = 1;
 
-  private Map<Integer, List<Integer>> buckets = new TreeMap<Integer, List<Integer>>();
+  private Map<Integer, List<Bucket>> bucketsMap = new TreeMap<Integer, List<Bucket>>();
 
-  private Map<Integer, Long> bucketByteCounter = new HashMap<Integer, Long>();
+  private Iterator<Integer> bucketsMapIterator;
+
+  private boolean hasTuples = false;
+
+  private boolean hasBuckets = false;
 
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
@@ -92,18 +105,23 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       innerKeyList[i] = inner.getSchema().getColumnId(joinKeyPairs.get(i)[1].getQualifiedName());
     }
 
+    // for projection
+    this.projector = new Projector(inSchema, outSchema, plan.getTargets());
+    this.evalContexts = projector.renew();
+
+    // for join
+    frameTuple = new FrameTuple();
+    outTuple = new VTuple(outSchema.getColumnNum());
     outerKeyTuple = new VTuple(outerKeyList.length);
 
-    innerBucketBuffers = new ArrayList<ByteBuffer>();
-    outerBucketBuffers = new ArrayList<ByteBuffer>();
+    outerKeyTuple = new VTuple(outerKeyList.length);
 
     // histogram partitioning
     Map<Integer, Long> histogram = context.getHistogram();
 
-    int bucketId = 0;
     int lastKey = -1;
     long accumulated = 0;
-    List<Integer> bucketIds;
+    List<Bucket> buckets;
 
     for (int key : histogram.keySet()) {
       long value = histogram.get(key);
@@ -111,22 +129,23 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       if (accumulated + value > WORKING_MEMORY) {
 
         if (accumulated > 0) {
-          bucketIds = new ArrayList<Integer>();
-          bucketIds.add(bucketId++);
-          buckets.put(lastKey, bucketIds);
+          buckets = new ArrayList<Bucket>();
+          buckets.add(new Bucket());
+          bucketsMap.put(lastKey, buckets);
           accumulated = value;
         }
 
         if (value > WORKING_MEMORY) {
           // handle bucket overflow
-          bucketIds = new ArrayList<Integer>();
+          buckets = new ArrayList<Bucket>();
+
+          ByteBuffer outerRelationBuffer = ByteBuffer.allocateDirect(65535);
+
           long i = value / WORKING_MEMORY;
           while (i-- > 0) {
-            bucketIds.add(bucketId);
-            bucketByteCounter.put(bucketId++, 0L);
+            buckets.add(new Bucket(outerRelationBuffer));
           }
-          buckets.put(key, bucketIds);
-
+          bucketsMap.put(key, buckets);
           accumulated = 0;
         }
       } else {
@@ -134,6 +153,11 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       }
 
       lastKey = key;
+    }
+    if (accumulated > 0) {
+      buckets = new ArrayList<Bucket>();
+      buckets.add(new Bucket());
+      bucketsMap.put(lastKey, buckets);
     }
 
   }
@@ -144,8 +168,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       bucketInnerRelation();
     }
 
-    Tuple outerTuple;
     if (step == 2) {
+      Tuple outerTuple;
       if ((outerTuple = bucketOuterRelation()) == null) {
         step++;
       }
@@ -153,27 +177,46 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
     if (step == 3) {
 
-      List<Tuple> tupleList;
+      ByteBuffer innerRelationBuffer, outerRelationBuffer;
+      List<Bucket> buckets;
+      Iterator<Bucket> bucketsIterator;
+      
+      if (bucketsMapIterator == null)
+        bucketsMapIterator = bucketsMap.keySet().iterator();
 
-      // for each tuple in currentPartition
-      // load all tuples into hashmap
+      while (iterator.hasNext()) {
+        
+        if(!hasTuples && !hasBuckets) {      
+          buckets = bucketsMap.get(iterator.next());
+          bucketsIterator = buckets.iterator();
+        }
+        
+        while (bucketsIterator.hasNext()) {
+          
+          if(!hasTuples) {
+            Bucket bucket = bucketsIterator.next();
 
-      // currentPartition
+            // load inner bucket
+            innerRelationBuffer = bucket.getInnerRelationBuffer();
+            tupleSlots.clear();
 
-      // load inner bucket
-      // if (tupleSlots.containsKey(key)) {
-      // tupleList = tupleSlots.get(key);
-      // tupleList.add(null);
-      // } else {
-      // tupleList = new ArrayList<Tuple>();
-      // tupleSlots.put(key, tupleList);
-      // }
+            outerRelationBuffer = bucket.getOuterRelationBuffer();
 
-      // probe outer bucket
-      for (ByteBuffer buffer : outerBucketBuffers) {
+            hasBuckets =  bucketsIterator.hasNext();
+          }
+          
+          // probe outer bucket
+          while (true) {
+            // check for match in tupleSlots
 
+            // until match is found
+            
+            
+            hasTuples = .hasNext()
+          }
+        }
       }
-
+      return null;
     }
     // return outerTuple;
     return null;
@@ -182,50 +225,45 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private void bucketInnerRelation() throws IOException {
     Tuple tuple;
     Tuple keyTuple;
-    List<Integer> bucketIds;
-    int bucketId = -1;
+    List<Bucket> buckets;
+    Bucket bucket = null;
 
     while ((tuple = innerChild.next()) != null) {
 
       keyTuple = new VTuple(joinKeyPairs.size());
-      List<Tuple> newValue;
       for (int i = 0; i < innerKeyList.length; i++) {
         keyTuple.put(i, tuple.get(innerKeyList[i]));
       }
 
-      bucketIds = getBucketId(keyTuple.hashCode());
-      if (bucketIds.size() == 1) {
-        bucketId = bucketIds.get(0);
+      buckets = getBuckets(keyTuple.hashCode());
+      if (buckets.size() == 1) {
+        bucket = buckets.get(0);
       } else {
         long tupleSize = getTupleSize(tuple);
-        for (int bId : bucketIds) {
-          long estimatedSize = bucketByteCounter.get(bId) + tupleSize;
+        for (Bucket b : buckets) {
+          long estimatedSize = b.getSize() + tupleSize;
           if (estimatedSize < WORKING_MEMORY) {
-            bucketByteCounter.put(bId, estimatedSize);
-            bucketId = bId;
+            b.setSize(estimatedSize);
+            bucket = b;
             break;
           }
         }
       }
 
-      if (bucketId == 0) {
-        if (tupleSlots.containsKey(keyTuple)) {
-          newValue = tupleSlots.get(keyTuple);
-          newValue.add(tuple);
-          // tupleSlots.put(keyTuple, newValue);
-        } else {
-          newValue = new ArrayList<Tuple>();
-          newValue.add(tuple);
-          tupleSlots.put(keyTuple, newValue);
+      if (bucket.isBucketZero()) {
+        List<Tuple> tuples = tupleSlots.get(keyTuple);
+        if (tuples == null) {
+          tuples = new ArrayList<Tuple>();
         }
+        tuples.add(tuple);
+        tupleSlots.put(keyTuple, tuples);
       } else {
-        ByteBuffer buffer = innerBucketBuffers.get(bucketId);
         // write tuple out to disk
+        ByteBuffer buffer = bucket.getInnerRelationBuffer();
 
       }
 
     }
-    first = false;
   }
 
   private long getTupleSize(Tuple tuple) {
@@ -238,8 +276,9 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private Tuple bucketOuterRelation() throws IOException {
     Tuple innerTuple;
-    Tuple outerTuple;
-    int bucketId = -1;
+    List<Tuple> tuples;
+    List<Bucket> buckets;
+    Bucket bucket;
 
     while (!foundMatch) {
       // getting new outer
@@ -251,40 +290,89 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       for (int i = 0; i < outerKeyList.length; i++) {
         outerKeyTuple.put(i, outerTuple.get(outerKeyList[i]));
       }
-      // bucketId = getBucketId(outerKeyTuple.hashCode());
+      buckets = getBuckets(outerKeyTuple.hashCode());
+      bucket = buckets.get(0);
 
-      // == partition zero
-      if (bucketId == currentBucket) { // probe directly
-        if (tupleSlots.containsKey(outerKeyTuple)) {
-          iterator = tupleSlots.get(outerKeyList).iterator();
+      if (bucket.isBucketZero()) {
+        if (buckets.size() > 1) {
+          ByteBuffer buffer = bucket.getOuterRelationBuffer();
+        }
+        // probe directly
+        tuples = tupleSlots.get(outerKeyList);
+        if (tuples != null) {
+          iterator = tuples.iterator();
           break;
         }
       } else {
-        ByteBuffer buffer = outerBucketBuffers.get(bucketId);
         // write tuple out to disk
+        ByteBuffer buffer = bucket.getOuterRelationBuffer();
 
       }
     }
 
-    // innerTuple = iterator.next();
-    // frameTuple.set(outerTuple, innerTuple);
-    // joinQual.eval(qualCtx, inSchema, frameTuple);
-    // if (joinQual.terminate(qualCtx).asBool()) {
-    // projector.eval(evalContexts, frameTuple);
-    // projector.terminate(evalContexts, outTuple);
-    // }
+    innerTuple = iterator.next();
+    frameTuple.set(outerTuple, innerTuple);
+    joinQual.eval(qualCtx, inSchema, frameTuple);
+    if (joinQual.terminate(qualCtx).asBool()) {
+      projector.eval(evalContexts, frameTuple);
+      projector.terminate(evalContexts, outTuple);
+    }
     foundMatch = iterator.hasNext();
 
-    // return outerTuple;
+    return outTuple;
+  }
+
+  private List<Bucket> getBuckets(int hashCode) {
+    for (int key : bucketsMap.keySet()) {
+      if (hashCode < key) {
+        return bucketsMap.get(key);
+      }
+    }
     return null;
   }
 
-  private List<Integer> getBucketId(int hashCode) {
-    for (int key : buckets.keySet()) {
-      if (hashCode < key) {
-        return buckets.get(key);
-      }
+  private class Bucket {
+
+    private ByteBuffer innerRelationBuffer;
+
+    private ByteBuffer outerRelationBuffer;
+
+    private long size = 0;
+
+    private boolean bucketZero = false;
+
+    public Bucket() {
+      this.innerRelationBuffer = ByteBuffer.allocateDirect(65535);
+      this.outerRelationBuffer = ByteBuffer.allocateDirect(65535);
     }
-    return null;
+
+    public Bucket(ByteBuffer outerRelationBuffer) {
+      this.innerRelationBuffer = ByteBuffer.allocateDirect(65535);
+      this.outerRelationBuffer = outerRelationBuffer;
+    }
+
+    public long getSize() {
+      return size;
+    }
+
+    public void setSize(long size) {
+      this.size = size;
+    }
+
+    public boolean isBucketZero() {
+      return bucketZero;
+    }
+
+    public void setBucketZero(boolean bucketZero) {
+      this.bucketZero = bucketZero;
+    }
+
+    public ByteBuffer getInnerRelationBuffer() {
+      return innerRelationBuffer;
+    }
+
+    public ByteBuffer getOuterRelationBuffer() {
+      return outerRelationBuffer;
+    }
   }
 }
