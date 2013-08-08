@@ -140,6 +140,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     int lastKey = -1;
     long accumulated = 0;
     List<Bucket> buckets;
+    boolean isFirst = true;
 
     for (int key : histogram.keySet()) {
       long value = histogram.get(key);
@@ -148,7 +149,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
         if (accumulated > 0) {
           buckets = new ArrayList<Bucket>();
-          buckets.add(new Bucket());
+          buckets.add(new Bucket(isFirst));
           bucketsMap.put(lastKey, buckets);
           accumulated = value;
         }
@@ -182,7 +183,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     }
     if (accumulated > 0) {
       buckets = new ArrayList<Bucket>();
-      buckets.add(new Bucket());
+      buckets.add(new Bucket(isFirst));
       bucketsMap.put(lastKey, buckets);
     }
 
@@ -420,7 +421,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
     private boolean bucketZero = false;
 
-    public Bucket() {
+    public Bucket(boolean bucketZero) {
+      this.bucketZero = bucketZero;
       try {
         innerPath = new Path(context.getWorkDir(), "innerBucket" + bucketId);
         this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, innerPath);
