@@ -53,9 +53,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private final static long WORKING_MEMORY = 1048576 * 128; // 128MB
 
-  private JoinNode plan;
   private EvalNode joinQual;
-  private FrameTuple frameTuple = new FrameTuple();
+  private FrameTuple frameTuple;
   private Tuple outTuple;
 
   private List<Column[]> joinKeyPairs;
@@ -98,10 +97,11 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private Tuple nextOuterTuple;
 
+  private Scanner outerScanner;
+
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
-    this.plan = plan;
     this.joinQual = plan.getJoinQual();
     this.qualCtx = joinQual.newContext();
     this.tupleSlots = new HashMap<Tuple, List<Tuple>>(10000);
@@ -190,12 +190,13 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   @Override
   public Tuple next() throws IOException {
-    if (step++ == 1) {
+    if (step == 1) {
       bucketInnerRelation();
+      step++;
     }
 
     if (step == 2) {
-      if ((outTuple = bucketOuterRelation()) == null) {
+      if (bucketOuterRelation() == null) {
 
         // close all appenders and open scanners
         for (List<Bucket> buckets : bucketsMap.values()) {
@@ -203,31 +204,33 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
             bucket.closeAppendersAndOpenScanners();
           }
         }
+        bucketsMapIterator = bucketsMap.keySet().iterator();
         step++;
       }
     }
 
     if (step == 3) {
 
-      Scanner innerScanner = null, outerScanner = null;
+      Scanner innerScanner = null;
       List<Bucket> buckets;
-      Tuple tuple;
       Tuple keyTuple;
+      Tuple tuple;
       List<Tuple> tuples;
 
-      if (bucketsMapIterator == null)
-        bucketsMapIterator = bucketsMap.keySet().iterator();
-
-      while (bucketsMapIterator.hasNext()) {
-
+      while (true) {
         if (!hasTuples && !hasBuckets) {
+          if (!bucketsMapIterator.hasNext()) {
+            return null;
+          }
           buckets = bucketsMap.get(bucketsMapIterator.next());
           bucketsIterator = buckets.iterator();
         }
 
-        while (bucketsIterator.hasNext()) {
-
+        while (true) {
           if (!hasTuples) {
+            if (!bucketsIterator.hasNext()) {
+              break;
+            }
             Bucket bucket = bucketsIterator.next();
 
             // load inner bucket
@@ -285,7 +288,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
           }
         }
       }
-      return null;
     }
     return outTuple;
   }
@@ -401,9 +403,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   }
 
   private class Bucket {
-
-    // private ByteBuffer innerRelationBuffer;
-    // private ByteBuffer outerRelationBuffer;
 
     private Path innerPath;
 
