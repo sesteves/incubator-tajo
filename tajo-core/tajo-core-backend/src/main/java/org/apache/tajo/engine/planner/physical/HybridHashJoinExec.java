@@ -94,6 +94,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private TableMeta innerTableMeta;
   private TableMeta outerTableMeta;
 
+  private Iterator<Bucket> bucketsIterator;
+
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
@@ -191,24 +193,25 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     }
 
     if (step == 2) {
-      Tuple outerTuple;
-      if ((outerTuple = bucketOuterRelation()) == null) {
-        step++;
+      if ((outTuple = bucketOuterRelation()) == null) {
 
-        // close all appenders
+        // close all appenders and open scanners
         for (List<Bucket> buckets : bucketsMap.values()) {
           for (Bucket bucket : buckets) {
             bucket.closeAppendersAndOpenScanners();
           }
         }
+        step++;
       }
     }
 
     if (step == 3) {
 
-      Scanner innerScanner, outerScanner;
+      Scanner innerScanner = null, outerScanner = null;
       List<Bucket> buckets;
-      Iterator<Bucket> bucketsIterator = null;
+      Tuple tuple;
+      Tuple keyTuple;
+      List<Tuple> tuples;
 
       if (bucketsMapIterator == null)
         bucketsMapIterator = bucketsMap.keySet().iterator();
@@ -226,27 +229,62 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
             Bucket bucket = bucketsIterator.next();
 
             // load inner bucket
-            innerScanner = bucket.getinnerScanner();
+            innerScanner = bucket.getInnerScanner();
             tupleSlots.clear();
 
-            outerScanner = bucket.getouterScanner();
+            while ((tuple = innerScanner.next()) != null) {
+              keyTuple = new VTuple(joinKeyPairs.size());
+              for (int i = 0; i < innerKeyList.length; i++) {
+                keyTuple.put(i, tuple.get(innerKeyList[i]));
+              }
+
+              tuples = tupleSlots.get(keyTuple);
+              if (tuples == null) {
+                tuples = new ArrayList<Tuple>();
+              }
+              tuples.add(tuple);
+              tupleSlots.put(keyTuple, tuples);
+            }
+
+            outerScanner = bucket.getOuterScanner();
+            outerTuple = outerScanner.next();
+            hasTuples = outerTuple != null;
             hasBuckets = bucketsIterator.hasNext();
           }
 
           // probe outer bucket
-          while (true) {
-            // check for match in tupleSlots
+          while (!foundMatch && hasTuples) {
 
-            // until match is found
+            keyTuple = new VTuple(joinKeyPairs.size());
+            for (int i = 0; i < outerKeyList.length; i++) {
+              keyTuple.put(i, outerTuple.get(outerKeyList[i]));
+            }
 
-            // hasTuples = .hasNext()
+            tuples = tupleSlots.get(keyTuple);
+            if (tuples != null) {
+              foundMatch = true;
+              iterator = tuples.iterator();
+            }
+            outerTuple = outerScanner.next();
+            hasTuples = outerTuple != null;
+          }
+
+          if (foundMatch) {
+            Tuple innerTuple = iterator.next();
+            frameTuple.set(outerTuple, innerTuple);
+            joinQual.eval(qualCtx, inSchema, frameTuple);
+            if (joinQual.terminate(qualCtx).asBool()) {
+              projector.eval(evalContexts, frameTuple);
+              projector.terminate(evalContexts, outTuple);
+            }
+            foundMatch = iterator.hasNext();
+            return outTuple;
           }
         }
       }
       return null;
     }
-    // return outerTuple;
-    return null;
+    return outTuple;
   }
 
   private void bucketInnerRelation() throws IOException {
@@ -286,7 +324,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
         tupleSlots.put(keyTuple, tuples);
       } else {
         // write tuple out to disk
-        Appender appender = bucket.getinnerAppender();
+        Appender appender = bucket.getInnerAppender();
         appender.addTuple(tuple);
       }
     }
@@ -332,7 +370,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
         }
       } else {
         // write tuple out to disk
-        Appender appender = bucket.getouterAppender();
+        Appender appender = bucket.getOuterAppender();
         appender.addTuple(outerTuple);
 
       }
@@ -430,19 +468,19 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       this.bucketZero = bucketZero;
     }
 
-    public Appender getinnerAppender() {
+    public Appender getInnerAppender() {
       return innerAppender;
     }
 
-    public Appender getouterAppender() {
+    public Appender getOuterAppender() {
       return outerAppender;
     }
 
-    public Scanner getinnerScanner() {
+    public Scanner getInnerScanner() {
       return innerScanner;
     }
 
-    public Scanner getouterScanner() {
+    public Scanner getOuterScanner() {
       return outerScanner;
     }
 
