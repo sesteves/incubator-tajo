@@ -129,8 +129,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     outTuple = new VTuple(outSchema.getColumnNum());
     outerKeyTuple = new VTuple(outerKeyList.length);
 
-    outerKeyTuple = new VTuple(outerKeyList.length);
-
     innerTableMeta = CatalogUtil.newTableMeta(innerChild.outSchema, StoreType.CSV);
     outerTableMeta = CatalogUtil.newTableMeta(outerChild.outSchema, StoreType.CSV);
 
@@ -150,6 +148,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
         if (accumulated > 0) {
           buckets = new ArrayList<Bucket>();
           buckets.add(new Bucket(isFirst));
+          isFirst = false;
           bucketsMap.put(lastKey, buckets);
           accumulated = value;
         }
@@ -239,7 +238,10 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
             tupleSlots.clear();
 
             while ((tuple = innerScanner.next()) != null) {
-              keyTuple = new VTuple(joinKeyPairs.size());
+              keyTuple = new VTuple(joinKeyPairs.size()); // FIXME no need to
+                                                          // be always creating
+                                                          // new object (store
+                                                          // as field)
               for (int i = 0; i < innerKeyList.length; i++) {
                 keyTuple.put(i, tuple.get(innerKeyList[i]));
               }
@@ -369,7 +371,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
         }
         // probe directly
-        tuples = tupleSlots.get(outerKeyList);
+        tuples = tupleSlots.get(outerKeyTuple);
         if (tuples != null) {
           iterator = tuples.iterator();
           break;
@@ -466,10 +468,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
     public boolean isBucketZero() {
       return bucketZero;
-    }
-
-    public void setBucketZero(boolean bucketZero) {
-      this.bucketZero = bucketZero;
     }
 
     public Appender getInnerAppender() {
