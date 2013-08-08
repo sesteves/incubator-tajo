@@ -96,6 +96,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private Iterator<Bucket> bucketsIterator;
 
+  private Tuple nextOuterTuple;
+
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
@@ -247,14 +249,15 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
             }
 
             outerScanner = bucket.getOuterScanner();
-            outerTuple = outerScanner.next();
-            hasTuples = outerTuple != null;
+            nextOuterTuple = outerScanner.next();
+            hasTuples = nextOuterTuple != null;
             hasBuckets = bucketsIterator.hasNext();
           }
 
           // probe outer bucket
           while (!foundMatch && hasTuples) {
 
+            outerTuple = nextOuterTuple;
             keyTuple = new VTuple(joinKeyPairs.size());
             for (int i = 0; i < outerKeyList.length; i++) {
               keyTuple.put(i, outerTuple.get(outerKeyList[i]));
@@ -265,8 +268,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
               foundMatch = true;
               iterator = tuples.iterator();
             }
-            outerTuple = outerScanner.next();
-            hasTuples = outerTuple != null;
+            nextOuterTuple = outerScanner.next();
+            hasTuples = nextOuterTuple != null;
           }
 
           if (foundMatch) {
