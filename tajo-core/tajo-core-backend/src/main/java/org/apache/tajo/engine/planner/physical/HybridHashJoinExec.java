@@ -154,10 +154,18 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
           buckets = new ArrayList<Bucket>();
 
           Path outerPath = new Path(context.getWorkDir(), "outerBucket" + bucketId);
+          Appender outerAppender = null;
+          try {
+            outerAppender = StorageManager.getAppender(context.getConf(), outerTableMeta, outerPath);
+            outerAppender.init();
+          } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+          }
 
           long i = value / WORKING_MEMORY;
           while (i-- > 0) {
-            buckets.add(new Bucket(outerPath));
+            buckets.add(new Bucket(outerPath, outerAppender));
           }
           bucketsMap.put(key, buckets);
           accumulated = 0;
@@ -190,8 +198,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
         // close all appenders
         for (List<Bucket> buckets : bucketsMap.values()) {
           for (Bucket bucket : buckets) {
-            bucket.getinnerAppender().close();
-            bucket.getouterAppender().close();
+            bucket.closeAppendersAndOpenScanners();
           }
         }
       }
@@ -357,6 +364,10 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     // private ByteBuffer innerRelationBuffer;
     // private ByteBuffer outerRelationBuffer;
 
+    private Path innerPath;
+
+    private Path outerPath;
+
     private Appender innerAppender;
 
     private Appender outerAppender;
@@ -370,25 +381,37 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     private boolean bucketZero = false;
 
     public Bucket() {
-      this(new Path(context.getWorkDir(), "outerBucket" + bucketId));
-    }
-
-    public Bucket(Path outerPath) {
       try {
-        Path path = new Path(context.getWorkDir(), "innerBucket" + bucketId++);
-        this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, path);
+        innerPath = new Path(context.getWorkDir(), "innerBucket" + bucketId);
+        this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, innerPath);
         this.innerAppender.init();
-        this.innerScanner = StorageManager.getScanner(context.getConf(), innerTableMeta, path);
-        this.innerScanner.init();
 
-        this.outerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, outerPath);
+        this.outerPath = new Path(context.getWorkDir(), "outerBucket" + bucketId++);
+        this.outerAppender = StorageManager.getAppender(context.getConf(), outerTableMeta, outerPath);
         this.outerAppender.init();
-        this.outerScanner = StorageManager.getScanner(context.getConf(), outerTableMeta, outerPath);
-        this.outerScanner.init();
-
       } catch (IOException e) {
         e.printStackTrace();
       }
+    }
+
+    public Bucket(Path outerPath, Appender outerAppender) {
+      try {
+        innerPath = new Path(context.getWorkDir(), "innerBucket" + bucketId++);
+        this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, innerPath);
+        this.innerAppender.init();
+
+        this.outerPath = outerPath;
+        this.outerAppender = outerAppender;
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+
+    public void closeAppendersAndOpenScanners() throws IOException {
+      innerAppender.close();
+      outerAppender.close();
+      innerScanner = StorageManager.getScanner(context.getConf(), innerTableMeta, innerPath);
+      outerScanner = StorageManager.getScanner(context.getConf(), outerTableMeta, outerPath);
     }
 
     public long getSize() {
