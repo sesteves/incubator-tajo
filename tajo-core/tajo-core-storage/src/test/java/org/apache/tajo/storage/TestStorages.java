@@ -111,10 +111,8 @@ public class TestStorages {
       long randomNum = (long) (Math.random() * fileLen) + 1;
 
       Fragment[] tablets = new Fragment[2];
-      tablets[0] = new Fragment("Splitable", tablePath, meta,
-          0, randomNum, null);
-      tablets[1] = new Fragment("Splitable", tablePath, meta,
-          randomNum, (fileLen - randomNum), null);
+      tablets[0] = new Fragment("Splitable", tablePath, meta, 0, randomNum);
+      tablets[1] = new Fragment("Splitable", tablePath, meta, randomNum, (fileLen - randomNum));
 
       Scanner scanner = StorageManager.getScanner(conf, meta, tablets[0], schema);
       scanner.init();
@@ -160,7 +158,7 @@ public class TestStorages {
     appender.close();
 
     FileStatus status = fs.getFileStatus(tablePath);
-    Fragment fragment = new Fragment("testReadAndWrite", tablePath, meta, 0, status.getLen(), null);
+    Fragment fragment = new Fragment("testReadAndWrite", tablePath, meta, 0, status.getLen());
 
     Schema target = new Schema();
     target.addColumn("age", Type.INT8);
@@ -170,7 +168,7 @@ public class TestStorages {
     int tupleCnt = 0;
     Tuple tuple;
     while ((tuple = scanner.next()) != null) {
-      if (storeType == StoreType.RCFILE || storeType == StoreType.TREVNI) {
+      if (storeType == StoreType.RCFILE || storeType == StoreType.TREVNI || storeType == StoreType.CSV) {
         assertNull(tuple.get(0));
       }
       assertEquals(DatumFactory.createInt8(tupleCnt + 2), tuple.getLong(1));
@@ -187,7 +185,7 @@ public class TestStorages {
     Schema schema = new Schema();
     schema.addColumn("col1", Type.BOOLEAN);
     schema.addColumn("col2", Type.BIT);
-    schema.addColumn("col3", Type.CHAR);
+    schema.addColumn("col3", Type.CHAR, 7);
     schema.addColumn("col4", Type.INT2);
     schema.addColumn("col5", Type.INT4);
     schema.addColumn("col6", Type.INT8);
@@ -208,7 +206,7 @@ public class TestStorages {
     tuple.put(new Datum[] {
         DatumFactory.createBool(true),
         DatumFactory.createBit((byte) 0x99),
-        DatumFactory.createChar('7'),
+        DatumFactory.createChar("hyunsik"),
         DatumFactory.createInt2((short) 17),
         DatumFactory.createInt4(59),
         DatumFactory.createInt8(23l),
@@ -224,12 +222,15 @@ public class TestStorages {
     appender.close();
 
     FileStatus status = fs.getFileStatus(tablePath);
-    Fragment fragment = new Fragment("table", tablePath, meta, 0, status.getLen(), null);
+    Fragment fragment = new Fragment("table", tablePath, meta, 0, status.getLen());
     Scanner scanner =  StorageManager.getScanner(conf, meta, fragment);
     scanner.init();
-    Tuple retrieved = scanner.next();
-    for (int i = 0; i < tuple.size(); i++) {
-      assertEquals(tuple.get(i), retrieved.get(i));
+
+    Tuple retrieved;
+    while ((retrieved=scanner.next()) != null) {
+      for (int i = 0; i < tuple.size(); i++) {
+        assertEquals(tuple.get(i), retrieved.get(i));
+      }
     }
   }
 }

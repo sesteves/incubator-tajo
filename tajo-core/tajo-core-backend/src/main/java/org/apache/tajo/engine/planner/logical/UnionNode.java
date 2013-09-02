@@ -21,26 +21,19 @@
  */
 package org.apache.tajo.engine.planner.logical;
 
-import org.apache.tajo.engine.json.GsonCreator;
-
 public class UnionNode extends BinaryNode {
 
   public UnionNode() {
-    super(ExprType.UNION);
+    super(NodeType.UNION);
   }
 
   public UnionNode(LogicalNode outer, LogicalNode inner) {
     this();
-    setOuter(outer);
-    setInner(inner);
+    setLeftChild(outer);
+    setRightChild(inner);
   }
 
   public String toString() {
-    return getOuterNode().toString() + "\n UNION \n" + getInnerNode().toString();
-  }
-
-  @Override
-  public String toJSON() {
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
+    return getLeftChild().toString() + "\n UNION \n" + getRightChild().toString();
   }
 }

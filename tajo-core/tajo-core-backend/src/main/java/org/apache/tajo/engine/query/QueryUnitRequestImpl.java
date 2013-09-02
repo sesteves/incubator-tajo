@@ -18,44 +18,31 @@
 
 package org.apache.tajo.engine.query;
 
+import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.ipc.TajoWorkerProtocol.Fetch;
+import org.apache.tajo.ipc.TajoWorkerProtocol.QueryUnitRequestProto;
+import org.apache.tajo.ipc.TajoWorkerProtocol.QueryUnitRequestProtoOrBuilder;
+import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
+import org.apache.tajo.storage.Fragment;
+
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import org.apache.tajo.QueryUnitAttemptId;
-import org.apache.tajo.engine.MasterWorkerProtos.Fetch;
-import org.apache.tajo.engine.MasterWorkerProtos.KeyValue;
-import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProto;
-import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProtoOrBuilder;
-import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
-import org.apache.tajo.storage.Fragment;
-
-import com.google.gson.annotations.Expose;
-
 public class QueryUnitRequestImpl implements QueryUnitRequest {
 
-  @Expose
   private QueryUnitAttemptId id;
-  @Expose
   private List<Fragment> fragments;
-  @Expose
   private String outputTable;
-  private boolean isUpdated;
-  @Expose
-  private boolean clusteredOutput;
-  @Expose
-  private String serializedData; // logical node
-  @Expose
-  private Boolean interQuery;
-  @Expose
-  private List<Fetch> fetches;
-  @Expose
+	private boolean isUpdated;
+	private boolean clusteredOutput;
+	private String serializedData;     // logical node
+	private Boolean interQuery;
+	private List<Fetch> fetches;
   private Boolean shouldDie;
-  @Expose
   private List<Integer> joinKeys;
-  @Expose
   private Map<Integer, Long> histogram;
 
   private QueryUnitRequestProto proto = QueryUnitRequestProto.getDefaultInstance();
@@ -111,21 +98,67 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	this.id = new QueryUnitAttemptId(p.getId());
 	return this.id;
   }
+	
+	public QueryUnitRequestImpl(QueryUnitAttemptId id, List<Fragment> fragments,
+			String outputTable, boolean clusteredOutput, 
+			String serializedData) {
+		this();
+		this.set(id, fragments, outputTable, clusteredOutput, serializedData);
+	}
+	
+	public QueryUnitRequestImpl(QueryUnitRequestProto proto) {
+		this.proto = proto;
+		viaProto = true;
+		id = null;
+		isUpdated = false;
+	}
+	
+	public void set(QueryUnitAttemptId id, List<Fragment> fragments,
+			String outputTable, boolean clusteredOutput, 
+			String serializedData) {
+		this.id = id;
+		this.fragments = fragments;
+		this.outputTable = outputTable;
+		this.clusteredOutput = clusteredOutput;
+		this.serializedData = serializedData;
+		this.isUpdated = true;
+	}
 
-  @Override
-  public List<Fragment> getFragments() {
-	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-	if (fragments != null) {
-	  return fragments;
+	@Override
+	public QueryUnitRequestProto getProto() {
+		mergeLocalToProto();
+		proto = viaProto ? proto : builder.build();
+		viaProto = true;
+		return proto;
 	}
-	if (fragments == null) {
-	  fragments = new ArrayList<Fragment>();
+
+	@Override
+	public QueryUnitAttemptId getId() {
+		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+		if (id != null) {
+			return this.id;
+		}
+		if (!p.hasId()) {
+			return null;
+		}
+		this.id = new QueryUnitAttemptId(p.getId());
+		return this.id;
 	}
-	for (int i = 0; i < p.getFragmentsCount(); i++) {
-	  fragments.add(new Fragment(p.getFragments(i)));
+
+	@Override
+	public List<Fragment> getFragments() {
+		QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+		if (fragments != null) {
+			return fragments;
+		}
+		if (fragments == null) {
+			fragments = new ArrayList<Fragment>();
+		}
+		for (int i = 0; i < p.getFragmentsCount(); i++) {
+			fragments.add(new Fragment(p.getFragments(i)));
+		}
+		return this.fragments;
 	}
-	return this.fragments;
-  }
 
   @Override
   public String getOutputTableId() {
@@ -188,7 +221,6 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	maybeInitBuilder();
 	initFetches();
 	fetches.add(Fetch.newBuilder().setName(name).setUrls(uri.toString()).build());
-
   }
 
   public List<Fetch> getFetches() {
@@ -284,45 +316,6 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
   }
 
   @Override
-  public void initFromProto() {
-	QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-	if (id == null && p.hasId()) {
-	  this.id = new QueryUnitAttemptId(p.getId());
-	}
-	if (fragments == null && p.getFragmentsCount() > 0) {
-	  this.fragments = new ArrayList<Fragment>();
-	  for (int i = 0; i < p.getFragmentsCount(); i++) {
-		this.fragments.add(new Fragment(p.getFragments(i)));
-	  }
-	}
-	if (outputTable == null && p.hasOutputTable()) {
-	  this.outputTable = p.getOutputTable();
-	}
-	if (isUpdated == false && p.hasClusteredOutput()) {
-	  this.clusteredOutput = p.getClusteredOutput();
-	}
-	if (serializedData == null && p.hasSerializedData()) {
-	  this.serializedData = p.getSerializedData();
-	}
-	if (interQuery == null && p.hasInterQuery()) {
-	  this.interQuery = p.getInterQuery();
-	}
-	if (fetches == null && p.getFetchesCount() > 0) {
-	  this.fetches = p.getFetchesList();
-	}
-	if (shouldDie == null && p.getShouldDie()) {
-	  this.shouldDie = true;
-	}
-	if (joinKeys == null && p.getJoinKeysCount() > 0) {
-	  this.joinKeys = p.getJoinKeysList();
-	}
-	if (histogram == null && p.getHistogramCount() > 0) {
-	  getHistogram();
-	}
-
-  }
-
-  @Override
   public void setJoinKeys(List<Integer> joinKeys) {
 	this.joinKeys = joinKeys;
   }
@@ -355,5 +348,4 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
 	}
 	return histogram;
   }
-
 }

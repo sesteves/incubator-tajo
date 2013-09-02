@@ -22,19 +22,18 @@ import com.google.common.base.Preconditions;
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
-import org.apache.tajo.engine.json.GsonCreator;
 import org.apache.tajo.util.TUtil;
 
 public final class SortNode extends UnaryNode implements Cloneable {
 	@Expose
-  private SortSpec[] sortKeys;
+  private SortSpec [] sortKeys;
 	
 	public SortNode() {
 		super();
 	}
 
   public SortNode(SortSpec[] sortKeys) {
-    super(ExprType.SORT);
+    super(NodeType.SORT);
     Preconditions.checkArgument(sortKeys.length > 0, 
         "At least one sort key must be specified");
     this.sortKeys = sortKeys;
@@ -54,9 +53,10 @@ public final class SortNode extends UnaryNode implements Cloneable {
   public boolean equals(Object obj) {
     if (obj instanceof SortNode) {
       SortNode other = (SortNode) obj;
-      return super.equals(other)
-          && TUtil.checkEquals(sortKeys, other.sortKeys)
-          && subExpr.equals(other.subExpr);
+      boolean eq = super.equals(other);
+      eq = eq && TUtil.checkEquals(sortKeys, other.sortKeys);
+      eq = eq && child.equals(other.child);
+      return eq;
     } else {
       return false;
     }
@@ -84,14 +84,6 @@ public final class SortNode extends UnaryNode implements Cloneable {
     sb.append("\n\"out schema: " + getOutSchema()
         + "\n\"in schema: " + getInSchema());
     return sb.toString()+"\n"
-        + getSubNode().toString();
-  }
-
-  public String toJSON() {
-    subExpr.toJSON();
-    for (int i = 0; i < sortKeys.length; i++) {
-      sortKeys[i].toJSON();
-    }
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
+        + getChild().toString();
   }
 }

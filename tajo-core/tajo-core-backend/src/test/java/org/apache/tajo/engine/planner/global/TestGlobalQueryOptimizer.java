@@ -16,20 +16,15 @@
  * limitations under the License.
  */
 
-/**
- * 
- */
 package org.apache.tajo.engine.planner.global;
 
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoTestingCluster;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
@@ -38,14 +33,18 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.eval.TestEvalTree.TestSum;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalOptimizer;
+import org.apache.tajo.engine.planner.LogicalPlan;
 import org.apache.tajo.engine.planner.LogicalPlanner;
-import org.apache.tajo.engine.planner.PlanningContext;
+import org.apache.tajo.engine.planner.PlanningException;
 import org.apache.tajo.engine.planner.logical.*;
 import org.apache.tajo.master.ExecutionBlock;
 import org.apache.tajo.master.GlobalPlanner;
 import org.apache.tajo.storage.*;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.IOException;
 
@@ -58,8 +57,9 @@ public class TestGlobalQueryOptimizer {
   private static CatalogService catalog;
   private static GlobalPlanner planner;
   private static Schema schema;
-  private static QueryAnalyzer analyzer;
+  private static SQLAnalyzer analyzer;
   private static LogicalPlanner logicalPlanner;
+  private static LogicalOptimizer logicalOptimizer;
   private static QueryId queryId;
   private static GlobalOptimizer optimizer;
 
@@ -88,10 +88,11 @@ public class TestGlobalQueryOptimizer {
 
     AsyncDispatcher dispatcher = new AsyncDispatcher();
 
-    planner = new GlobalPlanner(conf, catalog, new StorageManager(conf),
+    planner = new GlobalPlanner(conf, new StorageManager(conf),
         dispatcher.getEventHandler());
-    analyzer = new QueryAnalyzer(catalog);
+    analyzer = new SQLAnalyzer();
     logicalPlanner = new LogicalPlanner(catalog);
+    logicalOptimizer = new LogicalOptimizer();
 
     int tbNum = 2;
     int tupleNum;
@@ -124,48 +125,47 @@ public class TestGlobalQueryOptimizer {
       catalog.addTable(desc);
     }
 
-    QueryIdFactory.reset();
+    //QueryIdFactory.reset();
     queryId = QueryIdFactory.newQueryId();
     optimizer = new GlobalOptimizer();
   }
-  
+
   @AfterClass
   public static void terminate() throws IOException {
     util.shutdownCatalogCluster();
   }
 
   @Test
-  public void testReduceLogicalQueryUnitSteps() throws IOException {
-    PlanningContext context = analyzer.parse(
+  public void testReduceLogicalQueryUnitSteps() throws IOException, PlanningException {
+    Expr expr = analyzer.parse(
         "select table0.age,table0.salary,table1.salary from table0,table1 where table0.salary = table1.salary order by table0.age");
-    LogicalNode plan = logicalPlanner.createPlan(context);
-    plan = LogicalOptimizer.optimize(context, plan);
+    LogicalPlan plan = logicalPlanner.createPlan(expr);
+    LogicalNode rootNode = logicalOptimizer.optimize(plan);
 
-    MasterPlan globalPlan = planner.build(queryId,
-        (LogicalRootNode) plan);
+    MasterPlan globalPlan = planner.build(queryId, (LogicalRootNode) rootNode);
     globalPlan = optimizer.optimize(globalPlan);
-    
+
     ExecutionBlock unit = globalPlan.getRoot();
     StoreTableNode store = unit.getStoreTableNode();
-    assertEquals(ExprType.PROJECTION, store.getSubNode().getType());
-    ProjectionNode proj = (ProjectionNode) store.getSubNode();
-    assertEquals(ExprType.SORT, proj.getSubNode().getType());
-    SortNode sort = (SortNode) proj.getSubNode();
-    assertEquals(ExprType.SCAN, sort.getSubNode().getType());
-    ScanNode scan = (ScanNode) sort.getSubNode();
-    
+    assertEquals(NodeType.PROJECTION, store.getChild().getType());
+    ProjectionNode proj = (ProjectionNode) store.getChild();
+    assertEquals(NodeType.SORT, proj.getChild().getType());
+    SortNode sort = (SortNode) proj.getChild();
+    assertEquals(NodeType.SCAN, sort.getChild().getType());
+    ScanNode scan = (ScanNode) sort.getChild();
+
     assertTrue(unit.hasChildBlock());
     unit = unit.getChildBlock(scan);
     store = unit.getStoreTableNode();
-    assertEquals(ExprType.SORT, store.getSubNode().getType());
-    sort = (SortNode) store.getSubNode();
-    assertEquals(ExprType.JOIN, sort.getSubNode().getType());
-    
+    assertEquals(NodeType.SORT, store.getChild().getType());
+    sort = (SortNode) store.getChild();
+    assertEquals(NodeType.JOIN, sort.getChild().getType());
+
     assertTrue(unit.hasChildBlock());
     for (ScanNode prevscan : unit.getScanNodes()) {
       ExecutionBlock prev = unit.getChildBlock(prevscan);
       store = prev.getStoreTableNode();
-      assertEquals(ExprType.SCAN, store.getSubNode().getType());
+      assertEquals(NodeType.SCAN, store.getChild().getType());
     }
   }
 }

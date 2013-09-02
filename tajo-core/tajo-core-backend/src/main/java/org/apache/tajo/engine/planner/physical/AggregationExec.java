@@ -25,7 +25,8 @@ import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.eval.ConstEval;
 import org.apache.tajo.engine.eval.EvalContext;
 import org.apache.tajo.engine.eval.EvalNode;
-import org.apache.tajo.engine.parser.QueryBlock;
+import org.apache.tajo.engine.eval.EvalType;
+import org.apache.tajo.engine.planner.Target;
 import org.apache.tajo.engine.planner.logical.GroupbyNode;
 
 import java.io.IOException;
@@ -77,8 +78,8 @@ public abstract class AggregationExec extends UnaryPhysicalExec {
     evals = new EvalNode[plan.getTargets().length];
     evalContexts = new EvalContext[plan.getTargets().length];
     for (int i = 0; i < plan.getTargets().length; i++) {
-      QueryBlock.Target t = plan.getTargets()[i];
-      if (t.getEvalTree().getType() == EvalNode.Type.FIELD && !nonNullGroupingFields.contains(t.getColumnSchema())) {
+      Target t = plan.getTargets()[i];
+      if (t.getEvalTree().getType() == EvalType.FIELD && !nonNullGroupingFields.contains(t.getColumnSchema())) {
         evals[i] = new ConstEval(DatumFactory.createNullDatum());
         evalContexts[i] = evals[i].newContext();
       } else {

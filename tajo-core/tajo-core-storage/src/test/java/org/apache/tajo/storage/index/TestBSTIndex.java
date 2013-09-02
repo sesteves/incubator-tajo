@@ -89,7 +89,7 @@ public class TestBSTIndex {
 
     FileStatus status = fs.getFileStatus(tablePath);
     long fileLen = status.getLen();
-    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen, null);
+    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
     
     SortSpec [] sortKeys = new SortSpec[2];
     sortKeys[0] = new SortSpec(schema.getColumn("long"), true, false);
@@ -109,6 +109,7 @@ public class TestBSTIndex {
     creater.open();
 
     SeekableScanner scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple keyTuple;
     long offset;
     while (true) {
@@ -130,6 +131,7 @@ public class TestBSTIndex {
     BSTIndexReader reader = bst.getIndexReader(new Path(testDir, "FindValueInCSV.idx"), keySchema, comp);
     reader.open();
     scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     for(int i = 0 ; i < TUPLE_NUM -1 ; i ++) {
       tuple.put(0, DatumFactory.createInt8(i));
       tuple.put(1, DatumFactory.createFloat8(i));
@@ -197,13 +199,14 @@ public class TestBSTIndex {
 
     FileStatus status = fs.getFileStatus(tablePath);
     long fileLen = status.getLen();
-    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen, null);
+    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
 
     tuple = new VTuple(keySchema.getColumnNum());
     BSTIndexReader reader = bst.getIndexReader(new Path(testDir, "BuildIndexWithAppender.idx"),
         keySchema, comp);
     reader.open();
     SeekableScanner scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     for(int i = 0 ; i < TUPLE_NUM -1 ; i ++) {
       tuple.put(0, DatumFactory.createInt8(i));
       tuple.put(1, DatumFactory.createFloat8(i));
@@ -244,7 +247,7 @@ public class TestBSTIndex {
     appender.close();
 
     FileStatus status = fs.getFileStatus(tablePath);
-    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, status.getLen(), null);
+    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, status.getLen());
     
     SortSpec [] sortKeys = new SortSpec[2];
     sortKeys[0] = new SortSpec(schema.getColumn("long"), true, false);
@@ -263,6 +266,7 @@ public class TestBSTIndex {
     creater.open();
 
     SeekableScanner scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple keyTuple;
     long offset;
     while (true) {
@@ -311,7 +315,7 @@ public class TestBSTIndex {
 
     FileStatus status = fs.getFileStatus(tablePath);
     long fileLen = status.getLen();
-    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen, null);
+    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
     
     SortSpec [] sortKeys = new SortSpec[2];
     sortKeys[0] = new SortSpec(schema.getColumn("int"), true, false);
@@ -330,6 +334,7 @@ public class TestBSTIndex {
     creater.open();
     
     SeekableScanner scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple keyTuple;
     long offset;
     while (true) {
@@ -351,6 +356,7 @@ public class TestBSTIndex {
         keySchema, comp);
     reader.open();
     scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple result;
     for(int i = 0 ; i < TUPLE_NUM -1 ; i ++) {
       keyTuple = new VTuple(2);
@@ -395,7 +401,7 @@ public class TestBSTIndex {
 
     FileStatus status = fs.getFileStatus(tablePath);
     long fileLen = status.getLen();
-    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen, null);
+    Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
     
     SortSpec [] sortKeys = new SortSpec[2];
     sortKeys[0] = new SortSpec(schema.getColumn("int"), true, false);
@@ -414,6 +420,7 @@ public class TestBSTIndex {
     creater.open();
 
     SeekableScanner scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple keyTuple;
     long offset;
     while (true) {
@@ -435,6 +442,7 @@ public class TestBSTIndex {
         keySchema, comp);
     reader.open();
     scanner  = (SeekableScanner)(StorageManager.getScanner(conf, meta, tablet));
+    scanner.init();
     Tuple result;
     for(int i = 1 ; i < TUPLE_NUM -1 ; i+=2) {
       keyTuple = new VTuple(2);

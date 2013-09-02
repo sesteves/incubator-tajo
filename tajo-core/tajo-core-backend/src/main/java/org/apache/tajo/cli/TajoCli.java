@@ -25,17 +25,16 @@ import jline.console.history.PersistentHistory;
 import org.apache.commons.cli.*;
 import org.apache.commons.lang.StringUtils;
 import org.apache.tajo.QueryId;
+import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoProtos.QueryState;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.client.ClientProtocol;
 import org.apache.tajo.client.QueryStatus;
 import org.apache.tajo.client.TajoClient;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
-import org.apache.tajo.master.cluster.ServerName;
+import org.apache.tajo.ipc.ClientProtos;
 import org.apache.tajo.util.FileUtil;
-import org.apache.tajo.util.TajoIdUtils;
 
 import java.io.File;
 import java.io.InputStream;
@@ -284,19 +283,25 @@ public class TajoCli {
         invokeCommand(cmds);
 
       } else { // submit a query to TajoMaster
-        ClientProtocol.SubmitQueryRespose response = client.executeQuery(stripped);
-
-        if (response.getResultCode() == ClientProtocol.ResultCode.OK) {
-          QueryId queryId = new QueryId(response.getQueryId());
-          if (queryId.equals(TajoIdUtils.NullQueryId)) {
-            sout.println("OK");
-          } else {
-            getQueryResult(queryId);
+        ClientProtos.GetQueryStatusResponse response = client.executeQuery(stripped);
+        if (response.getResultCode() == ClientProtos.ResultCode.OK) {
+          QueryId queryId = null;
+          try {
+            queryId = new QueryId(response.getQueryId());
+            if (queryId.equals(QueryIdFactory.NULL_QUERY_ID)) {
+              sout.println("OK");
+            } else {
+              getQueryResult(queryId);
+            }
+          } finally {
+            if(queryId != null) {
+              client.closeQuery(queryId);
+            }
           }
         } else {
-        if (response.hasErrorMessage()) {
-          sout.println(response.getErrorMessage());
-        }
+          if (response.hasErrorMessage()) {
+            sout.println(response.getErrorMessage());
+          }
         }
       }
     }
@@ -309,7 +314,7 @@ public class TajoCli {
 
   private void getQueryResult(QueryId queryId) {
     // if query is empty string
-    if (queryId.equals(TajoIdUtils.NullQueryId)) {
+    if (queryId.equals(QueryIdFactory.NULL_QUERY_ID)) {
       return;
     }
 
@@ -318,8 +323,13 @@ public class TajoCli {
 
       QueryStatus status;
       while (true) {
+        // TODO - configurable
         Thread.sleep(1000);
         status = client.getQueryStatus(queryId);
+        if(status.getState() == QueryState.QUERY_MASTER_INIT || status.getState() == QueryState.QUERY_MASTER_LAUNCHED) {
+          continue;
+        }
+
         if (status.getState() == QueryState.QUERY_RUNNING ||
             status.getState() == QueryState.QUERY_SUCCEEDED) {
           sout.println("Progress: " + (int)(status.getProgress() * 100.0f)
@@ -328,7 +338,7 @@ public class TajoCli {
           sout.flush();
         }
 
-        if (status.getState() != QueryState.QUERY_RUNNING) {
+        if (status.getState() != QueryState.QUERY_RUNNING && status.getState() != QueryState.QUERY_NOT_ASSIGNED) {
           break;
         }
       }
@@ -417,7 +427,7 @@ public class TajoCli {
 
   private String toFormattedString(TableDesc desc) {
     StringBuilder sb = new StringBuilder();
-    sb.append("\ntable name: ").append(desc.getId()).append("\n");
+    sb.append("\ntable name: ").append(desc.getName()).append("\n");
     sb.append("table path: ").append(desc.getPath()).append("\n");
     sb.append("store type: ").append(desc.getMeta().getStoreType()).append("\n");
     if (desc.getMeta().getStat() != null) {
@@ -431,6 +441,9 @@ public class TajoCli {
     for(int i = 0; i < desc.getMeta().getSchema().getColumnNum(); i++) {
       Column col = desc.getMeta().getSchema().getColumn(i);
       sb.append(col.getColumnName()).append("\t").append(col.getDataType().getType());
+      if (col.getDataType().hasLength()) {
+        sb.append("(").append(col.getDataType().getLength()).append(")");
+      }
       sb.append("\n");
     }
     return sb.toString();

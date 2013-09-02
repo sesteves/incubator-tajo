@@ -24,7 +24,6 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Options;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
-import org.apache.tajo.engine.json.GsonCreator;
 import org.apache.tajo.util.TUtil;
 
 public class CreateTableNode extends LogicalNode implements Cloneable {
@@ -34,9 +33,10 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
   @Expose private Schema schema;
   @Expose private Path path;
   @Expose private Options options;
+  @Expose private boolean external;
 
   public CreateTableNode(String tableName, Schema schema) {
-    super(ExprType.CREATE_TABLE);
+    super(NodeType.CREATE_TABLE);
     this.tableName = tableName;
     this.schema = schema;
   }
@@ -80,6 +80,14 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
   public Options getOptions() {
     return this.options;
   }
+
+  public boolean isExternal() {
+    return external;
+  }
+
+  public void setExternal(boolean external) {
+    this.external = external;
+  }
   
   @Override
   public boolean equals(Object obj) {
@@ -89,7 +97,8 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
           && this.tableName.equals(other.tableName)
           && this.schema.equals(other.schema)
           && this.storageType == other.storageType
-          && this.path.equals(other.path)
+          && this.external == other.external
+          && TUtil.checkEquals(path, other.path)
           && TUtil.checkEquals(options, other.options)
           && TUtil.checkEquals(partitionKeys, other.partitionKeys);
     } else {
@@ -103,7 +112,8 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
     store.tableName = tableName;
     store.schema = (Schema) schema.clone();
     store.storageType = storageType;
-    store.path = new Path(path.toString());
+    store.external = external;
+    store.path = path != null ? new Path(path.toString()) : null;
     store.partitionKeys = partitionKeys != null ? partitionKeys.clone() : null;
     store.options = (Options) (options != null ? options.clone() : null);
     return store;
@@ -111,7 +121,7 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
   
   public String toString() {
     StringBuilder sb = new StringBuilder();
-    sb.append("\"Store\": {\"table\": \""+tableName+"\",");
+    sb.append("\"CreateTable\": {\"table\": \""+tableName+"\",");
     if (partitionKeys != null) {
       sb.append("\"partition keys: [");
       for (int i = 0; i < partitionKeys.length; i++) {
@@ -124,16 +134,13 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
     sb.append("\"schema: \"{" + this.schema).append("}");
     sb.append(",\"storeType\": \"" + this.storageType);
     sb.append(",\"path\" : \"" + this.path).append("\",");
+    sb.append(",\"external\" : \"" + this.external).append("\",");
     
     sb.append("\n  \"out schema\": ").append(getOutSchema()).append(",")
     .append("\n  \"in schema\": ").append(getInSchema())
     .append("}");
     
     return sb.toString();
-  }
-  
-  public String toJSON() {
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
   }
 
   @Override

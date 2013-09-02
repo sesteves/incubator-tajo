@@ -3,12 +3,52 @@ Tajo Change Log
 Release 0.2.0 - unreleased
 
   NEW FEATURES
+
+    TAJO-59: Implement Char Datum Type. (jihoon)
    
+    TAJO-96: Design and implement rewrite rule interface and the rewrite rule 
+    engine. (hyunsik)
+
+    TAJO-19: CREATE TABLE without external data should be supported. (jinho)
+
     TAJO-57: Recognize Parser and Catalog Standard SQL data types. (hyunsik)
 
     TAJO-33: Implement a basic query progress indicator. (hyunsik)
 
   IMPROVEMENTS
+
+    TAJO-94: Remove duplicate proto files. (hyunsik)
+
+    TAJO-141: Set on demand as the default cluster mode. (hyunsik)
+
+    TAJO-136: Broadcast join should be enabled. (hyunsik)
+
+    TAJO-127: Implement Tajo Resource Manager. (hyoungjunkim via hyunsik)
+
+    TAJO-84: Task scheduling with considering disk load balance. (jinho)
+
+    TAJO-123: Clean up the logical plan's json format. (hyunsik)
+
+    TAJO-129: Enable the constructor of NettyServerBase to take a service
+    name. (hyunsik)
+
+    TAJO-91: Launch QueryMaster on NodeManager per query. 
+    (hyoungjunkim via hyunsik)
+
+    TAJO-100: Port the parse error handling to the new parser. (jinho)
+
+    TAJO-121: Add LogicalPlanVisitor and Refactor LogicalOptimizer to use the
+    visitor. (hyunsik)
+
+    TAJO-118: Refactor and Improve text file Scanner. (jinho)
+
+    TAJO-95: Eliminate the lazy copy approach from the classes wrapping
+    protobuf-generated classes. (hyunsik)
+
+    TAJO-102: Add AlgebraVisitor and Refactor LogicalPlanner to use the visitor.
+    (hyunsik)
+
+    TAJO-87: Integration of tajo algebra module and SQL parser. (hyunsik)
 
     TAJO-70: Refactor GlobalEngine to handle DDL statements. (hyunsik)
 
@@ -18,9 +58,11 @@ Release 0.2.0 - unreleased
 
     TAJO-79: Refactor and Improve TajoCli. (hyunsik)
 
-    TAJO-77: Rename TabletProto as FragmentProto in CatalogProtos.proto. (jihoon)
+    TAJO-77: Rename TabletProto as FragmentProto in CatalogProtos.proto. 
+    (jihoon)
 
-    TAJO-22: The package prefix should be org.apache.tajo. (DaeMyung Kang via hyunsik)
+    TAJO-22: The package prefix should be org.apache.tajo. (DaeMyung Kang via 
+    hyunsik)
 
     TAJO-75: Separate SQL.g into SQLParser.g and SQLLexer.g. (hyunsik)
 
@@ -74,7 +116,13 @@ Release 0.2.0 - unreleased
 
   BUG FIXES
 
-    TAJO-82: NullPointerException occurs when Schema is converted as an array of columns. (jihoon)
+    TAJO-137: Unreleased resources and wrong allocation requests in
+    TajoWorkerResourceManager. (hyoungjunkim via hyunsik)
+
+    TAJO-130: Same queryConf file conflicts. (jinho)
+
+    TAJO-82: NullPointerException occurs when Schema is converted as an array 
+    of columns. (jihoon)
 
     TAJO-65: Invalid pom.xml configurations for source directories. 
     (Takuya Ueshin via hyunsik)

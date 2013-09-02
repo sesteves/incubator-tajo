@@ -23,19 +23,16 @@ import com.google.common.collect.Maps;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.*;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.physical.ExternalSortExec;
@@ -47,6 +44,9 @@ import org.apache.tajo.storage.index.bst.BSTIndex;
 import org.apache.tajo.util.CommonTestingUtil;
 import org.apache.tajo.util.TUtil;
 import org.apache.tajo.worker.dataserver.retriever.FileChunk;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
@@ -61,8 +61,9 @@ public class TestRangeRetrieverHandler {
   private TajoTestingCluster util;
   private TajoConf conf;
   private CatalogService catalog;
-  private QueryAnalyzer analyzer;
+  private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
+  private LogicalOptimizer optimizer;
   private StorageManager sm;
   private Schema schema;
   private static int TEST_TUPLE = 10000;
@@ -71,7 +72,6 @@ public class TestRangeRetrieverHandler {
 
   @Before
   public void setUp() throws Exception {
-    QueryIdFactory.reset();
     util = new TajoTestingCluster();
     conf = util.getConfiguration();
     testDir = CommonTestingUtil.getTestDir("target/test-data/TestRangeRetrieverHandler");
@@ -80,8 +80,9 @@ public class TestRangeRetrieverHandler {
     catalog = util.getMiniCatalogCluster().getCatalog();
     sm = StorageManager.get(conf, testDir);
 
-    analyzer = new QueryAnalyzer(catalog);
+    analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
+    optimizer = new LogicalOptimizer();
 
     schema = new Schema();
     schema.addColumn("empId", Type.INT4);
@@ -135,12 +136,12 @@ public class TestRangeRetrieverHandler {
     TaskAttemptContext
         ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(),
         new Fragment[] {frags[0]}, testDir);
-    PlanningContext context = analyzer.parse(SORT_QUERY[0]);
-    LogicalNode plan = planner.createPlan(context);
-    plan = LogicalOptimizer.optimize(context, plan);
+    Expr expr = analyzer.parse(SORT_QUERY[0]);
+    LogicalPlan plan = planner.createPlan(expr);
+    LogicalNode rootNode = optimizer.optimize(plan);
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf,sm);
-    PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
+    PhysicalExec exec = phyPlanner.createPlan(ctx, rootNode);
 
     ProjectionExec proj = (ProjectionExec) exec;
     ExternalSortExec sort = (ExternalSortExec) proj.getChild();
@@ -162,7 +163,7 @@ public class TestRangeRetrieverHandler {
     reader.open();
     SeekableScanner scanner = (SeekableScanner)
         sm.getScanner(conf, employeeMeta, StorageUtil.concatPath(testDir, "output", "output"));
-
+    scanner.init();
     int cnt = 0;
     while(scanner.next() != null) {
       cnt++;
@@ -246,12 +247,12 @@ public class TestRangeRetrieverHandler {
     TaskAttemptContext
         ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(),
         new Fragment[] {frags[0]}, testDir);
-    PlanningContext context = analyzer.parse(SORT_QUERY[1]);
-    LogicalNode plan = planner.createPlan(context);
-    plan = LogicalOptimizer.optimize(context, plan);
+    Expr expr = analyzer.parse(SORT_QUERY[1]);
+    LogicalPlan plan = planner.createPlan(expr);
+    LogicalNode rootNode = optimizer.optimize(plan);
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf,sm);
-    PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
+    PhysicalExec exec = phyPlanner.createPlan(ctx, rootNode);
 
     ProjectionExec proj = (ProjectionExec) exec;
     ExternalSortExec sort = (ExternalSortExec) proj.getChild();
@@ -272,7 +273,7 @@ public class TestRangeRetrieverHandler {
     reader.open();
     SeekableScanner scanner = (SeekableScanner) StorageManager.getScanner(
         conf, meta, StorageUtil.concatPath(testDir, "output", "output"));
-
+    scanner.init();
     int cnt = 0;
     while(scanner.next() != null) {
       cnt++;

@@ -21,46 +21,30 @@
  */
 package org.apache.tajo.ipc.protocolrecords;
 
+import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.common.ProtoObject;
+import org.apache.tajo.ipc.TajoWorkerProtocol;
+import org.apache.tajo.storage.Fragment;
+
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.tajo.QueryUnitAttemptId;
-import org.apache.tajo.common.ProtoObject;
-import org.apache.tajo.engine.MasterWorkerProtos.Fetch;
-import org.apache.tajo.engine.MasterWorkerProtos.QueryUnitRequestProto;
-import org.apache.tajo.storage.Fragment;
+public interface QueryUnitRequest extends ProtoObject<TajoWorkerProtocol.QueryUnitRequestProto> {
 
-public interface QueryUnitRequest extends ProtoObject<QueryUnitRequestProto> {
-
-  public QueryUnitAttemptId getId();
-
-  public List<Fragment> getFragments();
-
-  public String getOutputTableId();
-
-  public boolean isClusteredOutput();
-
-  public String getSerializedData();
-
-  public boolean isInterQuery();
-
-  public void setInterQuery();
-
-  public void addFetch(String name, URI uri);
-
-  public List<Fetch> getFetches();
-
+	public QueryUnitAttemptId getId();
+	public List<Fragment> getFragments();
+	public String getOutputTableId();
+	public boolean isClusteredOutput();
+	public String getSerializedData();
+	public boolean isInterQuery();
+	public void setInterQuery();
+	public void addFetch(String name, URI uri);
+	public List<TajoWorkerProtocol.Fetch> getFetches();
   public boolean shouldDie();
-
   public void setShouldDie();
-
   public List<Integer> getJoinKeys();
-
   public void setJoinKeys(List<Integer> joinKeys);
-
   public void setHistogram(Map<Integer, Long> histogram);
-
   public Map<Integer, Long> getHistogram();
-
 }

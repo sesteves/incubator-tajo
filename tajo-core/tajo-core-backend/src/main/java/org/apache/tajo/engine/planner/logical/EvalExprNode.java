@@ -21,26 +21,34 @@
  */
 package org.apache.tajo.engine.planner.logical;
 
-import com.google.gson.Gson;
 import com.google.gson.annotations.Expose;
-import org.apache.tajo.engine.json.GsonCreator;
-import org.apache.tajo.engine.parser.QueryBlock;
+import org.apache.tajo.engine.planner.Target;
+import org.apache.tajo.util.TUtil;
 
-public class EvalExprNode extends LogicalNode {
-  @Expose private QueryBlock.Target[] exprs;
+public class EvalExprNode extends LogicalNode implements Projectable {
+  @Expose private Target[] exprs;
 
-  public EvalExprNode(QueryBlock.Target[] exprs) {
-    super(ExprType.EXPRS);
+  public EvalExprNode(Target[] exprs) {
+    super(NodeType.EXPRS);
     this.exprs = exprs;
   }
 
   @Override
-  public String toJSON() {
-    Gson gson = GsonCreator.getInstance();
-    return gson.toJson(this);
+  public boolean hasTargets() {
+    return true;
   }
-  
-  public QueryBlock.Target[] getExprs() {
+
+  @Override
+  public void setTargets(Target[] targets) {
+    this.exprs = targets;
+  }
+
+  @Override
+  public Target[] getTargets() {
+    return exprs;
+  }
+
+  public Target[] getExprs() {
     return this.exprs;
   }
   
@@ -61,6 +69,15 @@ public class EvalExprNode extends LogicalNode {
     sb.append("\n  \"in schema\": ").append(getInSchema());
     sb.append("}");
     return sb.toString();
+  }
+
+  public boolean equals(Object object) {
+    if (object instanceof EvalExprNode) {
+      EvalExprNode other = (EvalExprNode) object;
+      return TUtil.checkEquals(this.exprs, other.exprs);
+    } else {
+      return false;
+    }
   }
   
   @Override

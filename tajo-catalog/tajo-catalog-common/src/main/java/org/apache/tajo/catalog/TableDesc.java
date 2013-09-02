@@ -20,11 +20,12 @@ package org.apache.tajo.catalog;
 
 import com.google.protobuf.Message;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.json.GsonObject;
 
-public interface TableDesc extends Cloneable {
-  void setId(String tableId);
+public interface TableDesc extends Cloneable, GsonObject {
+  void setName(String tableId);
   
-  String getId();
+  String getName();
   
   void setPath(Path path);
   
@@ -35,10 +36,6 @@ public interface TableDesc extends Cloneable {
   TableMeta getMeta();
   
   Message getProto();
-  
-  void initFromProto();
-  
-  String toJSON();
  
   Object clone() throws CloneNotSupportedException;
 }

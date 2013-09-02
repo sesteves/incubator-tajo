@@ -80,9 +80,13 @@ public class MergeScanner implements Scanner {
 
   @Override
   public void close() throws IOException {
-    currentScanner.close();
+    if(currentScanner != null) {
+      currentScanner.close();
+    }
     iterator = null;
-    fragments.clear();
+    if(fragments != null) {
+      fragments.clear();
+    }
   }
 
   @Override
@@ -106,5 +110,10 @@ public class MergeScanner implements Scanner {
   @Override
   public Schema getSchema() {
     return meta.getSchema();
+  }
+
+  @Override
+  public boolean isSplittable(){
+    return false;
   }
 }

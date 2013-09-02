@@ -22,32 +22,31 @@
 package org.apache.tajo.engine.planner.logical;
 
 import com.google.gson.annotations.Expose;
+import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.engine.json.CoreGsonHelper;
+import org.apache.tajo.util.TUtil;
 
-public abstract class LogicalNode implements Cloneable {
-	@Expose
-	private ExprType type;
-	@Expose
-	private Schema inputSchema;
-	@Expose
-	private Schema outputSchema;
+public abstract class LogicalNode implements Cloneable, GsonObject {
+  @Expose private NodeType type;
+	@Expose private Schema inputSchema;
+	@Expose	private Schema outputSchema;
 
-	@Expose
-	private double cost = 0;
+	@Expose	private double cost = 0;
 	
 	public LogicalNode() {
 		
 	}
 
-	public LogicalNode(ExprType type) {
+	public LogicalNode(NodeType type) {
 		this.type = type;
 	}
 	
-	public ExprType getType() {
+	public NodeType getType() {
 		return this.type;
 	}
 
-	public void setType(ExprType type) {
+	public void setType(NodeType type) {
 		this.type = type;
 	}
 
@@ -80,12 +79,12 @@ public abstract class LogicalNode implements Cloneable {
 	  if (obj instanceof LogicalNode) {
 	    LogicalNode other = (LogicalNode) obj;
 
-      boolean b1 = this.type == other.type;
-      boolean b2 = this.inputSchema.equals(other.inputSchema);
-      boolean b3 = this.outputSchema.equals(other.outputSchema);
-      boolean b4 = this.cost == other.cost;
+      boolean eq = this.type == other.type;
+      eq = eq && TUtil.checkEquals(this.inputSchema, other.inputSchema);
+      eq = eq && TUtil.checkEquals(this.outputSchema, other.outputSchema);
+      eq = eq && this.cost == other.cost;
       
-      return b1 && b2 && b3 && b4;
+      return eq;
 	  } else {
 	    return false;
 	  }
@@ -102,8 +101,11 @@ public abstract class LogicalNode implements Cloneable {
 	  
 	  return node;
 	}
-	
-	public abstract String toJSON();
+
+  @Override
+  public String toJson() {
+    return CoreGsonHelper.toJson(this, LogicalNode.class);
+  }
 
 	public abstract void preOrder(LogicalNodeVisitor visitor);
   public abstract void postOrder(LogicalNodeVisitor visitor);

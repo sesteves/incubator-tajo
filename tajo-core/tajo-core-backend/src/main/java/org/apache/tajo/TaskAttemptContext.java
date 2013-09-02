@@ -18,6 +18,16 @@
 
 package org.apache.tajo;
 
+import com.google.common.base.Objects;
+import com.google.common.collect.Maps;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.Path;
+import org.apache.tajo.TajoProtos.TaskAttemptState;
+import org.apache.tajo.catalog.statistics.TableStat;
+import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.storage.Fragment;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -27,17 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.CountDownLatch;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.Path;
-import org.apache.tajo.TajoProtos.TaskAttemptState;
-import org.apache.tajo.catalog.statistics.TableStat;
-import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.storage.Fragment;
-
-import com.google.common.base.Objects;
-import com.google.common.collect.Maps;
 
 /**
  * Contains the information about executing subquery.
@@ -62,158 +61,159 @@ public class TaskAttemptContext {
   private List<Integer> joinKeys;
   private Map<Integer, Long> histogram;
 
-  public TaskAttemptContext(TajoConf conf, final QueryUnitAttemptId queryId, final Fragment[] fragments,
-	  final Path workDir) {
-	this.conf = conf;
-	this.queryId = queryId;
+  public TaskAttemptContext(TajoConf conf, final QueryUnitAttemptId queryId,
+                            final Fragment[] fragments,
+                            final Path workDir) {
+    this.conf = conf;
+    this.queryId = queryId;
+    
+    for(Fragment t : fragments) {
+      if (fragmentMap.containsKey(t.getName())) {
+        fragmentMap.get(t.getName()).add(t);
+      } else {
+        List<Fragment> frags = new ArrayList<Fragment>();
+        frags.add(t);
+        fragmentMap.put(t.getName(), frags);
+      }
+    }
 
-	for (Fragment t : fragments) {
-	  if (fragmentMap.containsKey(t.getId())) {
-		fragmentMap.get(t.getId()).add(t);
-	  } else {
-		List<Fragment> frags = new ArrayList<Fragment>();
-		frags.add(t);
-		fragmentMap.put(t.getId(), frags);
-	  }
-	}
-
-	this.workDir = workDir;
-	this.repartitions = Maps.newHashMap();
-
-	state = TaskAttemptState.TA_PENDING;
+    this.workDir = workDir;
+    this.repartitions = Maps.newHashMap();
+    
+    state = TaskAttemptState.TA_PENDING;
   }
 
   public TajoConf getConf() {
-	return this.conf;
+    return this.conf;
   }
-
+  
   public TaskAttemptState getState() {
-	return this.state;
+    return this.state;
   }
-
+  
   public void setState(TaskAttemptState state) {
-	this.state = state;
-	LOG.info("Query status of " + getTaskId() + " is changed to " + state);
+    this.state = state;
+    LOG.info("Query status of " + getTaskId() + " is changed to " + state);
   }
 
   public boolean hasResultStats() {
-	return resultStats != null;
+    return resultStats != null;
   }
 
   public void setResultStats(TableStat stats) {
-	this.resultStats = stats;
+    this.resultStats = stats;
   }
 
   public TableStat getResultStats() {
-	return this.resultStats;
+    return this.resultStats;
   }
-
+  
   public boolean isStopped() {
-	return this.stopped;
+    return this.stopped;
   }
 
   public void setInterQuery() {
-	this.interQuery = true;
+    this.interQuery = true;
   }
 
   public void setOutputPath(Path outputPath) {
-	this.outputPath = outputPath;
+    this.outputPath = outputPath;
   }
 
   public Path getOutputPath() {
-	return this.outputPath;
+    return this.outputPath;
   }
 
   public boolean isInterQuery() {
-	return this.interQuery;
+    return this.interQuery;
   }
-
+  
   public void stop() {
-	this.stopped = true;
+    this.stopped = true;
   }
-
+  
   public void addFetchPhase(int count, File fetchIn) {
-	this.needFetch = true;
-	this.doneFetchPhaseSignal = new CountDownLatch(count);
-	this.fetchIn = fetchIn;
+    this.needFetch = true;
+    this.doneFetchPhaseSignal = new CountDownLatch(count);
+    this.fetchIn = fetchIn;
   }
-
+  
   public File getFetchIn() {
-	return this.fetchIn;
+    return this.fetchIn;
   }
-
+  
   public boolean hasFetchPhase() {
-	return this.needFetch;
+    return this.needFetch;
   }
-
+  
   public CountDownLatch getFetchLatch() {
-	return doneFetchPhaseSignal;
+    return doneFetchPhaseSignal;
   }
-
+  
   public void addRepartition(int partKey, String path) {
-	repartitions.put(partKey, path);
+    repartitions.put(partKey, path);
   }
-
-  public Iterator<Entry<Integer, String>> getRepartitions() {
-	return repartitions.entrySet().iterator();
+  
+  public Iterator<Entry<Integer,String>> getRepartitions() {
+    return repartitions.entrySet().iterator();
   }
-
-  public void changeFragment(String tableId, Fragment[] fragments) {
-	fragmentMap.remove(tableId);
-	for (Fragment t : fragments) {
-	  if (fragmentMap.containsKey(t.getId())) {
-		fragmentMap.get(t.getId()).add(t);
-	  } else {
-		List<Fragment> frags = new ArrayList<Fragment>();
-		frags.add(t);
-		fragmentMap.put(t.getId(), frags);
-	  }
-	}
+  
+  public void changeFragment(String tableId, Fragment [] fragments) {
+    fragmentMap.remove(tableId);
+    for(Fragment t : fragments) {
+      if (fragmentMap.containsKey(t.getName())) {
+        fragmentMap.get(t.getName()).add(t);
+      } else {
+        List<Fragment> frags = new ArrayList<Fragment>();
+        frags.add(t);
+        fragmentMap.put(t.getName(), frags);
+      }
+    }
   }
-
+  
   public Path getWorkDir() {
-	return this.workDir;
+    return this.workDir;
   }
-
+  
   public QueryUnitAttemptId getTaskId() {
-	return this.queryId;
+    return this.queryId;
   }
-
+  
   public float getProgress() {
-	return this.progress;
+    return this.progress;
   }
-
+  
   public void setProgress(float progress) {
-	this.progress = progress;
+    this.progress = progress;
   }
 
   public Fragment getTable(String id) {
-	return fragmentMap.get(id).get(0);
+    return fragmentMap.get(id).get(0);
   }
 
   public int getFragmentSize() {
-	return fragmentMap.size();
+    return fragmentMap.size();
   }
 
   public Collection<String> getInputTables() {
-	return fragmentMap.keySet();
+    return fragmentMap.keySet();
   }
-
-  public Fragment[] getTables(String id) {
-	return fragmentMap.get(id).toArray(new Fragment[fragmentMap.get(id).size()]);
+  
+  public Fragment [] getTables(String id) {
+    return fragmentMap.get(id).toArray(new Fragment[fragmentMap.get(id).size()]);
   }
-
+  
   public int hashCode() {
-	return Objects.hashCode(queryId);
+    return Objects.hashCode(queryId);
   }
-
+  
   public boolean equals(Object obj) {
-	if (obj instanceof TaskAttemptContext) {
-	  TaskAttemptContext other = (TaskAttemptContext) obj;
-	  return queryId.equals(other.getTaskId());
-	} else {
-	  return false;
-	}
+    if (obj instanceof TaskAttemptContext) {
+      TaskAttemptContext other = (TaskAttemptContext) obj;
+      return queryId.equals(other.getTaskId());
+    } else {
+      return false;
+    }
   }
 
   public List<Integer> getJoinKeys() {

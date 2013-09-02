@@ -26,16 +26,19 @@ import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
+import org.apache.tajo.engine.json.CoreGsonHelper;
+import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.storage.Tuple;
+import org.apache.tajo.util.TUtil;
 
 import java.util.List;
 
-public class CaseWhenEval extends EvalNode {
+public class CaseWhenEval extends EvalNode implements GsonObject {
   @Expose private List<WhenEval> whens = Lists.newArrayList();
   @Expose private EvalNode elseResult;
 
   public CaseWhenEval() {
-    super(Type.CASE);
+    super(EvalType.CASE);
   }
 
   public void addWhen(EvalNode condition, EvalNode result) {
@@ -87,6 +90,7 @@ public class CaseWhenEval extends EvalNode {
     }
   }
 
+  @Override
   public String toString() {
     StringBuilder sb = new StringBuilder("CASE\n");
     for (WhenEval when : whens) {
@@ -130,18 +134,18 @@ public class CaseWhenEval extends EvalNode {
           return false;
         }
       }
-      return elseResult.equals(other.elseResult);
+      return TUtil.checkEquals(elseResult, other.elseResult);
     } else {
       return false;
     }
   }
 
-  public static class WhenEval extends EvalNode {
+  public static class WhenEval extends EvalNode implements GsonObject {
     @Expose private EvalNode condition;
     @Expose private EvalNode result;
 
     public WhenEval(EvalNode condition, EvalNode result) {
-      super(Type.WHEN);
+      super(EvalType.WHEN);
       this.condition = condition;
       this.result = result;
     }
@@ -179,8 +183,25 @@ public class CaseWhenEval extends EvalNode {
       return this.result;
     }
 
+    @Override
+    public boolean equals(Object object) {
+      if (object instanceof WhenEval) {
+        WhenEval other = (WhenEval) object;
+        return condition.equals(other.condition) &&
+            result.equals(other.result);
+      } else {
+        return false;
+      }
+    }
+
+    @Override
     public String toString() {
       return "WHEN " + condition + " THEN " + result;
+    }
+
+    @Override
+    public String toJson() {
+      return CoreGsonHelper.toJson(WhenEval.this, WhenEval.class);
     }
 
     private class WhenContext implements EvalContext {
@@ -209,17 +230,6 @@ public class CaseWhenEval extends EvalNode {
       condition.postOrder(visitor);
       result.postOrder(visitor);
       visitor.visit(this);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (obj instanceof WhenEval) {
-       WhenEval other = (WhenEval) obj;
-        return this.condition == other.condition
-            && this.result == other.result;
-      } else {
-        return false;
-      }
     }
   }
 

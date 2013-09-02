@@ -62,7 +62,9 @@ public class TestTajoClient {
   @AfterClass
   public static void tearDown() throws Exception {
     util.shutdownMiniCluster();
-    tajo.close();
+    if(tajo != null) {
+      tajo.close();
+    }
   }
 
   private static Path writeTmpTable(String tableName) throws IOException {
@@ -111,9 +113,9 @@ public class TestTajoClient {
   }
 
   @Test
-  public final void testCreateAndDropTableByExecuteQuery() throws IOException, ServiceException {
+  public final void testCreateAndDropExternalTableByExecuteQuery() throws IOException, ServiceException {
     TajoConf conf = util.getConfiguration();
-    final String tableName = "testCreateAndDropTableByExecuteQuery";
+    final String tableName = "testCreateAndDropExternalTableByExecuteQuery";
 
     BackendTestingUtil.writeTmpTable(conf, "file:///tmp", tableName, false);
     Path tablePath = writeTmpTable(tableName);
@@ -129,6 +131,27 @@ public class TestTajoClient {
     assertFalse(tajo.existTable(tableName));
     FileSystem localFS = FileSystem.getLocal(conf);
     assertFalse(localFS.exists(tablePath));
+  }
+
+  @Test
+  public final void testCreateAndDropTableByExecuteQuery() throws IOException, ServiceException {
+    TajoConf conf = util.getConfiguration();
+    final String tableName = "testCreateAndDropTableByExecuteQuery";
+
+    assertFalse(tajo.existTable(tableName));
+
+    String tql = "create table " + tableName + " (deptname text, score int4)";
+
+    tajo.updateQuery(tql);
+    assertTrue(tajo.existTable(tableName));
+
+    FileSystem hdfs = FileSystem.get(conf);
+    Path tablePath = tajo.getTableDesc(tableName).getPath();
+    assertTrue(hdfs.exists(tablePath));
+
+    tajo.updateQuery("drop table " + tableName);
+    assertFalse(tajo.existTable(tableName));
+    assertFalse(hdfs.exists(tablePath));
   }
 
   @Test
@@ -174,7 +197,7 @@ public class TestTajoClient {
     assertTrue(tajo.existTable(tableName1));
     TableDesc desc = tajo.getTableDesc(tableName1);
     assertNotNull(desc);
-    assertEquals(tableName1, desc.getId());
+    assertEquals(tableName1, desc.getName());
     assertTrue(desc.getMeta().getStat().getNumBytes() > 0);
   }
 }
