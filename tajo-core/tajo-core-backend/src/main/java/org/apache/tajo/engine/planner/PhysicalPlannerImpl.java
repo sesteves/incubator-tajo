@@ -205,19 +205,20 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       long outerSize = estimateSizeRecursive(ctx, outerLineage);
       long innerSize = estimateSizeRecursive(ctx, innerLineage);
 
-      PhysicalExec selectedOuter;
-      PhysicalExec selectedInner;
-      if (outerSize <= innerSize) {
-        selectedInner = outer;
-        selectedOuter = inner;
-      } else {
-        selectedInner = inner;
-        selectedOuter = outer;
+      if (ctx.getHistogram() != null) {
+        PhysicalExec selectedOuter;
+        PhysicalExec selectedInner;
+        if (outerSize <= innerSize) {
+          selectedInner = outer;
+          selectedOuter = inner;
+        } else {
+          selectedInner = inner;
+          selectedOuter = outer;
+        }
+
+        LOG.info("The planner chooses HybridHashJoinExec");
+        return new HybridHashJoinExec(ctx, joinNode, selectedOuter, selectedInner);
       }
-
-      LOG.info("The planner chooses HybridHashJoinExec");
-      return new HybridHashJoinExec(ctx, joinNode, selectedOuter, selectedInner);
-
       // final long threshold = 1048576 * 128; // 64MB
       //
       // boolean hashJoin = false;

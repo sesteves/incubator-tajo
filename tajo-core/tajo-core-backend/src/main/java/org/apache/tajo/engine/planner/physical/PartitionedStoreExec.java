@@ -51,8 +51,8 @@ public final class PartitionedStoreExec extends UnaryPhysicalExec {
   private static final NumberFormat numFormat = NumberFormat.getInstance();
 
   static {
-	numFormat.setGroupingUsed(false);
-	numFormat.setMinimumIntegerDigits(6);
+    numFormat.setGroupingUsed(false);
+    numFormat.setMinimumIntegerDigits(6);
   }
 
   private final StoreTableNode plan;
@@ -66,90 +66,90 @@ public final class PartitionedStoreExec extends UnaryPhysicalExec {
   private final Map<Integer, Appender> appenderMap = new HashMap<Integer, Appender>();
 
   public PartitionedStoreExec(TaskAttemptContext context, final StorageManager sm, final StoreTableNode plan,
-	  final PhysicalExec child) throws IOException {
-	super(context, plan.getInSchema(), plan.getOutSchema(), child);
-	Preconditions.checkArgument(plan.hasPartitionKey());
-	this.plan = plan;
-	this.meta = CatalogUtil.newTableMeta(this.outSchema, StoreType.CSV);
+      final PhysicalExec child) throws IOException {
+    super(context, plan.getInSchema(), plan.getOutSchema(), child);
+    Preconditions.checkArgument(plan.hasPartitionKey());
+    this.plan = plan;
+    this.meta = CatalogUtil.newTableMeta(this.outSchema, StoreType.CSV);
 
-	// about the partitions
-	this.numPartitions = this.plan.getNumPartitions();
-	int i = 0;
-	this.partitionKeys = new int[this.plan.getPartitionKeys().length];
-	for (Column key : this.plan.getPartitionKeys()) {
-	  partitionKeys[i] = inSchema.getColumnId(key.getQualifiedName());
-	  i++;
-	}
-	this.partitioner = new HashPartitioner(partitionKeys, numPartitions);
-	storeTablePath = new Path(context.getWorkDir(), "output");
+    // about the partitions
+    this.numPartitions = this.plan.getNumPartitions();
+    int i = 0;
+    this.partitionKeys = new int[this.plan.getPartitionKeys().length];
+    for (Column key : this.plan.getPartitionKeys()) {
+      partitionKeys[i] = inSchema.getColumnId(key.getQualifiedName());
+      i++;
+    }
+    this.partitioner = new HashPartitioner(partitionKeys, numPartitions);
+    storeTablePath = new Path(context.getWorkDir(), "output");
   }
 
   @Override
   public void init() throws IOException {
-	super.init();
-	FileSystem fs = new RawLocalFileSystem();
-	fs.mkdirs(storeTablePath);
+    super.init();
+    FileSystem fs = new RawLocalFileSystem();
+    fs.mkdirs(storeTablePath);
   }
 
   private Appender getAppender(int partition) throws IOException {
-	Appender appender = appenderMap.get(partition);
+    Appender appender = appenderMap.get(partition);
 
-	if (appender == null) {
-	  Path dataFile = getDataFile(partition);
-	  FileSystem fs = dataFile.getFileSystem(context.getConf());
-	  if (fs.exists(dataFile)) {
-		LOG.info("File " + dataFile + " already exists!");
-		FileStatus status = fs.getFileStatus(dataFile);
-		LOG.info("File size: " + status.getLen());
-	  }
-	  appender = StorageManager.getAppender(context.getConf(), meta, dataFile);
-	  appender.enableStats();
-	  appender.setJoinKeys(context.getJoinKeys());
-	  appender.init();
-	  appenderMap.put(partition, appender);
-	} else {
-	  appender = appenderMap.get(partition);
-	}
+    if (appender == null) {
+      Path dataFile = getDataFile(partition);
+      FileSystem fs = dataFile.getFileSystem(context.getConf());
+      if (fs.exists(dataFile)) {
+        LOG.info("File " + dataFile + " already exists!");
+        FileStatus status = fs.getFileStatus(dataFile);
+        LOG.info("File size: " + status.getLen());
+      }
+      appender = StorageManager.getAppender(context.getConf(), meta, dataFile);
+      appender.enableStats();
+      appender.setJoinKeys(context.getJoinKeys());
+      appender.init();
+      appenderMap.put(partition, appender);
+    } else {
+      appender = appenderMap.get(partition);
+    }
 
-	return appender;
+    return appender;
   }
 
   private Path getDataFile(int partition) {
-	return StorageUtil.concatPath(storeTablePath, "" + partition);
+    return StorageUtil.concatPath(storeTablePath, "" + partition);
   }
 
   @Override
   public Tuple next() throws IOException {
-	Tuple tuple;
-	Appender appender;
-	int partition;
-	while ((tuple = child.next()) != null) {
-	  partition = partitioner.getPartition(tuple);
-	  appender = getAppender(partition);
-	  appender.addTuple(tuple);
-	}
+    Tuple tuple;
+    Appender appender;
+    int partition;
+    while ((tuple = child.next()) != null) {
+      partition = partitioner.getPartition(tuple);
+      appender = getAppender(partition);
+      appender.addTuple(tuple);
+    }
 
-	List<TableStat> statSet = new ArrayList<TableStat>();
-	for (Map.Entry<Integer, Appender> entry : appenderMap.entrySet()) {
-	  int partNum = entry.getKey();
-	  Appender app = entry.getValue();
-	  app.flush();
-	  app.close();
-	  statSet.add(app.getStats());
-	  if (app.getStats().getNumRows() > 0) {
-		context.addRepartition(partNum, getDataFile(partNum).getName());
-	  }
-	}
+    List<TableStat> statSet = new ArrayList<TableStat>();
+    for (Map.Entry<Integer, Appender> entry : appenderMap.entrySet()) {
+      int partNum = entry.getKey();
+      Appender app = entry.getValue();
+      app.flush();
+      app.close();
+      statSet.add(app.getStats());
+      if (app.getStats().getNumRows() > 0) {
+        context.addRepartition(partNum, getDataFile(partNum).getName());
+      }
+    }
 
-	// Collect and aggregated statistics data
-	TableStat aggregated = StatisticsUtil.aggregateTableStat(statSet);
-	context.setResultStats(aggregated);
+    // Collect and aggregated statistics data
+    TableStat aggregated = StatisticsUtil.aggregateTableStat(statSet);
+    context.setResultStats(aggregated);
 
-	return null;
+    return null;
   }
 
   @Override
   public void rescan() throws IOException {
-	// nothing to do
+    // nothing to do
   }
 }
