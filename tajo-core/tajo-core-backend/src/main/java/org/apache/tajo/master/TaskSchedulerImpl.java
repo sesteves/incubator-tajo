@@ -542,6 +542,14 @@ public class TaskSchedulerImpl extends AbstractService
             taskAssign.setHistogram(executionBlock.getHistogram());
           }
 
+          task = context.getSubQuery(
+              attemptId.getQueryUnitId().getExecutionBlockId()).getQueryUnit(attemptId.getQueryUnitId());
+          QueryUnitRequest taskAssign = new QueryUnitRequestImpl(
+              attemptId,
+              Lists.newArrayList(task.getAllFragments()),
+              task.getOutputName(),
+              false,
+              task.getLogicalPlan().toJson());
           if (task.getStoreTableNode().isLocal()) {
             taskAssign.setInterQuery();
           }

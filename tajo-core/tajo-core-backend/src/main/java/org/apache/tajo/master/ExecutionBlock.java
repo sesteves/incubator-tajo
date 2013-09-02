@@ -78,8 +78,9 @@ public class ExecutionBlock {
   }
 
   public void setPlan(LogicalNode plan) {
-	hasJoinPlan = false;
-	Preconditions.checkArgument(plan.getType() == ExprType.STORE || plan.getType() == ExprType.CREATE_INDEX);
+
+    hasJoinPlan = false;
+    Preconditions.checkArgument(plan.getType() == NodeType.STORE);
 
     this.plan = plan;
     store = (StoreTableNode) plan;

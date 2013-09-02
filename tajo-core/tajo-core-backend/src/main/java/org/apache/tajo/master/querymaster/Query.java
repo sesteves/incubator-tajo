@@ -78,24 +78,31 @@ public class Query implements EventHandler<QueryEvent> {
   // State Machine
   private final StateMachine<QueryState, QueryEventType, QueryEvent> stateMachine;
 
-  private static final StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent> stateMachineFactory = new StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent>(
-	  QueryState.QUERY_NEW)
+  private static final StateMachineFactory
+      <Query,QueryState,QueryEventType,QueryEvent> stateMachineFactory =
+      new StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent>
+          (QueryState.QUERY_NEW)
 
-	  .addTransition(QueryState.QUERY_NEW, EnumSet.of(QueryState.QUERY_INIT, QueryState.QUERY_FAILED),
-		  QueryEventType.INIT, new InitTransition())
+      .addTransition(QueryState.QUERY_NEW,
+          EnumSet.of(QueryState.QUERY_INIT, QueryState.QUERY_FAILED),
+          QueryEventType.INIT, new InitTransition())
 
-	  .addTransition(QueryState.QUERY_INIT, QueryState.QUERY_RUNNING, QueryEventType.START, new StartTransition())
+      .addTransition(QueryState.QUERY_INIT, QueryState.QUERY_RUNNING,
+          QueryEventType.START, new StartTransition())
 
-	  .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_RUNNING, QueryEventType.INIT_COMPLETED,
-		  new InitCompleteTransition())
-	  .addTransition(QueryState.QUERY_RUNNING,
-		  EnumSet.of(QueryState.QUERY_RUNNING, QueryState.QUERY_SUCCEEDED, QueryState.QUERY_FAILED),
-		  QueryEventType.SUBQUERY_COMPLETED, new SubQueryCompletedTransition())
-	  .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_ERROR, QueryEventType.INTERNAL_ERROR,
-		  new InternalErrorTransition())
-	  .addTransition(QueryState.QUERY_ERROR, QueryState.QUERY_ERROR, QueryEventType.INTERNAL_ERROR)
+      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_RUNNING,
+          QueryEventType.INIT_COMPLETED, new InitCompleteTransition())
+      .addTransition(QueryState.QUERY_RUNNING,
+          EnumSet.of(QueryState.QUERY_RUNNING, QueryState.QUERY_SUCCEEDED,
+              QueryState.QUERY_FAILED),
+          QueryEventType.SUBQUERY_COMPLETED,
+          new SubQueryCompletedTransition())
+      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_ERROR,
+          QueryEventType.INTERNAL_ERROR, new InternalErrorTransition())
+       .addTransition(QueryState.QUERY_ERROR, QueryState.QUERY_ERROR,
+          QueryEventType.INTERNAL_ERROR)
 
-	  .installTopology();
+      .installTopology();
 
   public Query(final QueryMasterTask.QueryContext context, final QueryId id,
                final long appSubmitTime,
@@ -179,6 +186,7 @@ public class Query implements EventHandler<QueryEvent> {
   public void setInitializationTime() {
     initializationTime = clock.getTime();
   }
+
 
   public long getFinishTime() {
     return finishTime;
@@ -275,19 +283,12 @@ public class Query implements EventHandler<QueryEvent> {
 	private Long histogramBytes = Long.MAX_VALUE;
 	private Map<Integer, Long> histogram;
 
-    @Override
-    public QueryState transition(Query query, QueryEvent event) {
-      // increase the count for completed subqueries
-      query.completedSubQueryCount++;
-      SubQueryCompletedEvent castEvent = (SubQueryCompletedEvent) event;
-      ExecutionBlockCursor cursor = query.getExecutionBlockCursor();
-
       // if the subquery is succeeded
       if (castEvent.getFinalState() == SubQueryState.SUCCEEDED) {
         if (cursor.hasNext()) {
 		  ExecutionBlock nextExecutionBlock = cursor.nextBlock();
           SubQuery nextSubQuery = new SubQuery(query.context, cursor.nextBlock(), query.sm);
-          
+
           TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
 		  if (tableStat.getHistogram().size() > 0 && tableStat.getNumBytes() < histogramBytes) {
 			histogram = tableStat.getHistogram();
@@ -374,7 +375,6 @@ public class Query implements EventHandler<QueryEvent> {
 
   /**
    * Check if all subqueries of the query are completed
-   * 
    * @return QueryState.QUERY_SUCCEEDED if all subqueries are completed.
    */
   QueryState checkQueryForCompleted() {
@@ -383,6 +383,7 @@ public class Query implements EventHandler<QueryEvent> {
     }
     return getState();
   }
+
 
   @Override
   public void handle(QueryEvent event) {
