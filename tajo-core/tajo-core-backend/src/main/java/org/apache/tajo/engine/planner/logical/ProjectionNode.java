@@ -19,12 +19,11 @@
 package org.apache.tajo.engine.planner.logical;
 
 import com.google.gson.annotations.Expose;
-import org.apache.tajo.engine.json.GsonCreator;
-import org.apache.tajo.engine.parser.QueryBlock.Target;
+import org.apache.tajo.engine.planner.Target;
 
 import java.util.Arrays;
 
-public class ProjectionNode extends UnaryNode {
+public class ProjectionNode extends UnaryNode implements Projectable {
   /**
    * the targets are always filled even if the query is 'select *'
    */
@@ -34,25 +33,35 @@ public class ProjectionNode extends UnaryNode {
   /**
    * This method is for gson.
    */
+  @SuppressWarnings("unused")
 	private ProjectionNode() {
 		super();
 	}
 
+  /**
+   * @param targets they should be all evaluated ones.
+   */
 	public ProjectionNode(Target [] targets) {		
-		super(ExprType.PROJECTION);
+		super(NodeType.PROJECTION);
 		this.targets = targets;
 	}
-	
-	public Target [] getTargets() {
-	  return this.targets;
-	}
 
-  public void setTargetList(Target [] targets) {
+  public boolean hasTargets() {
+    return this.targets != null;
+  }
+
+  @Override
+  public void setTargets(Target[] targets) {
     this.targets = targets;
   }
+
+  @Override
+  public Target [] getTargets() {
+    return this.targets;
+  }
 	
-	public void setSubNode(LogicalNode subNode) {
-	  super.setSubNode(subNode);
+	public void setChild(LogicalNode subNode) {
+	  super.setChild(subNode);
 	}
 	
 	public String toString() {
@@ -74,7 +83,7 @@ public class ProjectionNode extends UnaryNode {
 	  sb.append("\n  \"in schema\": ").append(getInSchema());
 	  sb.append("}");
 	  return sb.toString()+"\n"
-	      + getSubNode().toString();
+	      + getChild().toString();
 	}
 	
 	@Override
@@ -84,7 +93,7 @@ public class ProjectionNode extends UnaryNode {
 	    
 	    boolean b1 = super.equals(other);
 	    boolean b2 = Arrays.equals(targets, other.targets);
-	    boolean b3 = subExpr.equals(other.subExpr);
+	    boolean b3 = child.equals(other.child);
 	    
 	    return b1 && b2 && b3;
 	  } else {
@@ -98,9 +107,5 @@ public class ProjectionNode extends UnaryNode {
 	  projNode.targets = targets.clone();
 	  
 	  return projNode;
-	}
-	
-	public String toJSON() {
-	  return GsonCreator.getInstance().toJson(this, LogicalNode.class);
 	}
 }

@@ -18,7 +18,7 @@
   -->
 
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <artifactId>tajo-project</artifactId>
@@ -33,13 +33,15 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <antlr4.visitor>true</antlr4.visitor>
+    <antlr4.listener>true</antlr4.listener>
   </properties>
 
   <repositories>
     <repository>
       <id>repository.jboss.org</id>
       <url>https://repository.jboss.org/nexus/content/repositories/releases/
-            </url>
+      </url>
       <snapshots>
         <enabled>false</enabled>
       </snapshots>
@@ -61,58 +63,10 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>2.12.4</version>
-        <dependencies>
-          <dependency>
-            <groupId>org.apache.maven.surefire</groupId>
-            <artifactId>surefire-junit47</artifactId>
-            <version>2.12.4</version>
-          </dependency>
-        </dependencies>
         <configuration>
-          <excludedGroups>org.apache.tajo.IntegrationTest</excludedGroups>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-failsafe-plugin</artifactId>
-        <version>2.12.4</version>
-        <dependencies>
-          <dependency>
-            <groupId>org.apache.maven.surefire</groupId>
-            <artifactId>surefire-junit47</artifactId>
-            <version>2.12.4</version>
-          </dependency>
-        </dependencies>
-        <executions>
-          <execution>
-            <goals>
-              <goal>integration-test</goal>
-              <goal>verify</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <includes>
-            <include>**/*.class</include>
-          </includes>
-          <groups>org.apache.tajo.IntegrationTest</groups>
-          <!--
-          <environmentVariables>
-            <TAJO_CLASSPATH>${project.basedir}/../../tajo-dist/target/tajo-${project.version}/*:${project.basedir}/../../tajo-dist/target/tajo-${project.version}/lib/*</TAJO_CLASSPATH>
-            <RUNTIME_CLASSPATH>${runtime_classpath}</RUNTIME_CLASSPATH>
-          </environmentVariables>
-          -->
-
           <systemProperties>
             <tajo.test>TRUE</tajo.test>
           </systemProperties>
-
-          <!--
-          <additionalClasspathElements>
-            <additionalClasspathElement>${project.basedir}/target/*</additionalClasspathElement>
-            <additionalClasspathElement>${project.basedir}/target/lib/*</additionalClasspathElement>
-          </additionalClasspathElements>
-          -->
         </configuration>
       </plugin>
       <plugin>
@@ -130,11 +84,11 @@
       </plugin>
       <plugin>
         <groupId>org.antlr</groupId>
-        <artifactId>antlr3-maven-plugin</artifactId>
+        <artifactId>antlr4-maven-plugin</artifactId>
         <executions>
           <execution>
             <goals>
-              <goal>antlr</goal>
+              <goal>antlr4</goal>
             </goals>
           </execution>
         </executions>
@@ -169,11 +123,15 @@
               <executable>protoc</executable>
               <arguments>
                 <argument>-Isrc/main/proto/</argument>
+                <argument>--proto_path=../../tajo-common/src/main/proto</argument>
+                <argument>--proto_path=../../tajo-catalog/tajo-catalog-common/src/main/proto</argument>
                 <argument>--java_out=target/generated-sources/proto</argument>
                 <argument>src/main/proto/tajo_protos.proto</argument>
-                <argument>src/main/proto/MasterWorkerProtos.proto</argument>
-                <argument>src/main/proto/MasterWorkerProtocol.proto</argument>
-                <argument>src/main/proto/ClientProtocol.proto</argument>
+                <argument>src/main/proto/ClientProtos.proto</argument>
+                <argument>src/main/proto/QueryMasterClientProtocol.proto</argument>
+                <argument>src/main/proto/TajoMasterProtocol.proto</argument>
+                <argument>src/main/proto/TajoWorkerProtocol.proto</argument>
+                <argument>src/main/proto/TajoMasterClientProtocol.proto</argument>
               </arguments>
             </configuration>
             <goals>
@@ -235,6 +193,10 @@
     <dependency>
       <groupId>org.apache.tajo</groupId>
       <artifactId>tajo-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-algebra</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
@@ -314,16 +276,16 @@
       <artifactId>protobuf-java</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.antlr</groupId>
-      <artifactId>antlr</artifactId>
-    </dependency>
-    <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
     </dependency>
     <dependency>
       <groupId>org.antlr</groupId>
-      <artifactId>antlr-runtime</artifactId>
+      <artifactId>antlr4</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.antlr</groupId>
+      <artifactId>antlr4-runtime</artifactId>
     </dependency>
     <dependency>
       <groupId>commons-logging</groupId>
@@ -359,8 +321,14 @@
       <artifactId>commons-lang</artifactId>
       <version>2.6</version>
     </dependency>
+    <!--
     <dependency>
       <groupId>org.jboss.netty</groupId>
+      <artifactId>netty</artifactId>
+    </dependency>
+    -->
+    <dependency>
+      <groupId>io.netty</groupId>
       <artifactId>netty</artifactId>
     </dependency>
     <dependency>
@@ -374,6 +342,40 @@
       <artifactId>dspace-geoip</artifactId>
       <version>1.2.3</version>
     </dependency>
+
+    <dependency>
+      <groupId>org.eclipse.jdt</groupId>
+      <artifactId>core</artifactId>
+      <version>3.1.1</version>
+    </dependency>
+
+
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>servlet-api</artifactId>
+      <version>2.5-20081211</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>jetty</artifactId>
+      <version>6.1.14</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>jetty-util</artifactId>
+      <version>6.1.14</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>jsp-2.1</artifactId>
+      <version>6.1.14</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>jsp-api-2.1</artifactId>
+      <version>6.1.14</version>
+    </dependency>
+
   </dependencies>
 
   <profiles>
@@ -400,6 +402,14 @@
                 </configuration>
               </execution>
             </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-report-plugin</artifactId>
+            <version>2.15</version>
+            <configuration>
+              <aggregate>true</aggregate>
+            </configuration>
           </plugin>
         </plugins>
       </build>
@@ -433,22 +443,17 @@
   <reporting>
     <plugins>
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>findbugs-maven-plugin</artifactId>
-        <version>2.3.2</version>
-        <configuration>
-          <xmlOutput>true</xmlOutput>
-          <xmlOutputDirectory>target/findbugs</xmlOutputDirectory>
-          <!--<excludeFilterFile>src/main/findbugs/findbugs-exclude.xml</excludeFilterFile>-->
-        </configuration>
-      </plugin>
-      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-project-info-reports-plugin</artifactId>
         <version>2.4</version>
         <configuration>
           <dependencyLocationsEnabled>false</dependencyLocationsEnabled>
         </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-report-plugin</artifactId>
+        <version>2.15</version>
       </plugin>
     </plugins>
   </reporting>

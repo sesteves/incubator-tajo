@@ -19,10 +19,8 @@
 package org.apache.tajo.engine.eval;
 
 import org.apache.hadoop.fs.Path;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
 import org.apache.tajo.TajoTestingCluster;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.function.GeneralFunction;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
@@ -30,21 +28,26 @@ import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
-import org.apache.tajo.engine.eval.EvalNode.Type;
-import org.apache.tajo.engine.json.GsonCreator;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
-import org.apache.tajo.engine.parser.QueryBlock;
+import org.apache.tajo.engine.json.CoreGsonHelper;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
+import org.apache.tajo.engine.planner.LogicalPlan;
+import org.apache.tajo.engine.planner.LogicalPlanner;
+import org.apache.tajo.engine.planner.Target;
 import org.apache.tajo.master.TajoMaster;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.VTuple;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
-import static org.junit.Assert.*;
 import static org.apache.tajo.common.TajoDataTypes.Type.*;
+import static org.junit.Assert.*;
 
 public class TestEvalTree {
   private static TajoTestingCluster util;
   private static CatalogService cat;
-  private static QueryAnalyzer analyzer;
+  private static SQLAnalyzer analyzer;
+  private static LogicalPlanner planner;
   private static Tuple [] tuples = new Tuple[3];
   
   @BeforeClass
@@ -70,7 +73,8 @@ public class TestEvalTree {
         CatalogUtil.newDataTypesWithoutLen(INT4, INT4));
     cat.registerFunction(funcMeta);
 
-    analyzer = new QueryAnalyzer(cat);
+    analyzer = new SQLAnalyzer();
+    planner = new LogicalPlanner(cat);
     
     tuples[0] = new VTuple(3);
     tuples[0].put(new Datum[] {
@@ -109,10 +113,6 @@ public class TestEvalTree {
       y =  params.get(1).asInt4();
       return DatumFactory.createInt4(x + y);
     }
-    
-    public String toJSON() {
-    	return GsonCreator.getInstance().toJson(this, GeneralFunction.class);
-    }
   }
 
   static String[] QUERIES = {
@@ -124,6 +124,24 @@ public class TestEvalTree {
       "select name from people where NOT (20 > 30)", // 5
   };
 
+  public static Target[] getRawTargets(String query) {
+    Expr expr = analyzer.parse(query);
+    LogicalPlan plan = planner.createPlan(expr);
+    Target [] targets = plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
+    for (Target t : targets) {
+      assertJsonSerDer(t.getEvalTree());
+    }
+    return targets;
+  }
+
+  public static EvalNode getRootSelection(String query) {
+    Expr block = analyzer.parse(query);
+    LogicalPlan plan = planner.createPlan(block);
+    EvalNode qual = plan.getRootBlock().getSelectionNode().getQual();
+    assertJsonSerDer(qual);
+    return qual;
+  }
+
   @Test
   public final void testFunctionEval() throws Exception {    
     Tuple tuple = new VTuple(3);
@@ -133,41 +151,29 @@ public class TestEvalTree {
           DatumFactory.createInt4(500),
           DatumFactory.createInt4(30)});
 
-    QueryBlock block;
     EvalNode expr;
 
     Schema peopleSchema = cat.getTableDesc("people").getMeta().getSchema();
-    block = (QueryBlock) analyzer.parse(QUERIES[0]).getParseTree();
     EvalContext evalCtx;
-    expr = block.getWhereCondition();
+    expr = getRootSelection(QUERIES[0]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuple);
     assertEquals(true, expr.terminate(evalCtx).asBool());
 
-    block = (QueryBlock) analyzer.parse(QUERIES[1]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(QUERIES[1]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuple);
     assertEquals(15000, expr.terminate(evalCtx).asInt4());
     assertCloneEqual(expr);
 
-    block = (QueryBlock) analyzer.parse(QUERIES[2]).getParseTree();
-    expr = block.getWhereCondition();
-    evalCtx = expr.newContext();
-    expr.eval(evalCtx, peopleSchema, tuple);
-    assertEquals(15050, expr.terminate(evalCtx).asInt4());
-    assertCloneEqual(expr);
-    
-    block = (QueryBlock) analyzer.parse(QUERIES[2]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(QUERIES[2]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuple);
     assertEquals(15050, expr.terminate(evalCtx).asInt4());
     assertCloneEqual(expr);
     
     // Aggregation function test
-    block = (QueryBlock) analyzer.parse(QUERIES[4]).getParseTree();
-    expr = block.getTargetList()[0].getEvalTree();
+    expr = getRawTargets(QUERIES[4])[0].getEvalTree();
     evalCtx = expr.newContext();
     
     final int tuplenum = 10;
@@ -199,7 +205,7 @@ public class TestEvalTree {
     schema1.addColumn("table1.id", INT4);
     schema1.addColumn("table1.score", INT4);
     
-    BinaryEval expr = new BinaryEval(Type.PLUS, e1, e2);
+    BinaryEval expr = new BinaryEval(EvalType.PLUS, e1, e2);
     EvalContext evalCtx = expr.newContext();
     assertCloneEqual(expr);
     VTuple tuple = new VTuple(2);
@@ -214,7 +220,7 @@ public class TestEvalTree {
   public static class MockTrueEval extends EvalNode {
 
     public MockTrueEval() {
-      super(Type.CONST);
+      super(EvalType.CONST);
     }
 
     @Override
@@ -247,7 +253,7 @@ public class TestEvalTree {
   public static class MockFalseExpr extends EvalNode {
 
     public MockFalseExpr() {
-      super(Type.CONST);
+      super(EvalType.CONST);
     }
 
     @Override
@@ -281,22 +287,22 @@ public class TestEvalTree {
     MockTrueEval trueExpr = new MockTrueEval();
     MockFalseExpr falseExpr = new MockFalseExpr();
 
-    BinaryEval andExpr = new BinaryEval(Type.AND, trueExpr, trueExpr);
+    BinaryEval andExpr = new BinaryEval(EvalType.AND, trueExpr, trueExpr);
     EvalContext evalCtx = andExpr.newContext();
     andExpr.eval(evalCtx, null, null);
     assertTrue(andExpr.terminate(evalCtx).asBool());
 
-    andExpr = new BinaryEval(Type.AND, falseExpr, trueExpr);
+    andExpr = new BinaryEval(EvalType.AND, falseExpr, trueExpr);
     evalCtx = andExpr.newContext();
     andExpr.eval(evalCtx, null, null);
     assertFalse(andExpr.terminate(evalCtx).asBool());
 
-    andExpr = new BinaryEval(Type.AND, trueExpr, falseExpr);
+    andExpr = new BinaryEval(EvalType.AND, trueExpr, falseExpr);
     evalCtx= andExpr.newContext();
     andExpr.eval(evalCtx, null, null);
     assertFalse(andExpr.terminate(evalCtx).asBool());
 
-    andExpr = new BinaryEval(Type.AND, falseExpr, falseExpr);
+    andExpr = new BinaryEval(EvalType.AND, falseExpr, falseExpr);
     evalCtx= andExpr.newContext();
     andExpr.eval(evalCtx, null, null);
     assertFalse(andExpr.terminate(evalCtx).asBool());
@@ -307,22 +313,22 @@ public class TestEvalTree {
     MockTrueEval trueExpr = new MockTrueEval();
     MockFalseExpr falseExpr = new MockFalseExpr();
 
-    BinaryEval orExpr = new BinaryEval(Type.OR, trueExpr, trueExpr);
+    BinaryEval orExpr = new BinaryEval(EvalType.OR, trueExpr, trueExpr);
     EvalContext evalCtx= orExpr.newContext();
     orExpr.eval(evalCtx, null, null);
     assertTrue(orExpr.terminate(evalCtx).asBool());
 
-    orExpr = new BinaryEval(Type.OR, falseExpr, trueExpr);
+    orExpr = new BinaryEval(EvalType.OR, falseExpr, trueExpr);
     evalCtx= orExpr.newContext();
     orExpr.eval(evalCtx, null, null);
     assertTrue(orExpr.terminate(evalCtx).asBool());
 
-    orExpr = new BinaryEval(Type.OR, trueExpr, falseExpr);
+    orExpr = new BinaryEval(EvalType.OR, trueExpr, falseExpr);
     evalCtx= orExpr.newContext();
     orExpr.eval(evalCtx, null, null);
     assertTrue(orExpr.terminate(evalCtx).asBool());
 
-    orExpr = new BinaryEval(Type.OR, falseExpr, falseExpr);
+    orExpr = new BinaryEval(EvalType.OR, falseExpr, falseExpr);
     evalCtx = orExpr.newContext();
     orExpr.eval(evalCtx, null, null);
     assertFalse(orExpr.terminate(evalCtx).asBool());
@@ -337,72 +343,71 @@ public class TestEvalTree {
     // Constant
     e1 = new ConstEval(DatumFactory.createInt4(9));
     e2 = new ConstEval(DatumFactory.createInt4(34));
-    expr = new BinaryEval(Type.LTH, e1, e2);
+    expr = new BinaryEval(EvalType.LTH, e1, e2);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LEQ, e1, e2);
+    expr = new BinaryEval(EvalType.LEQ, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LTH, e2, e1);
+    expr = new BinaryEval(EvalType.LTH, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LEQ, e2, e1);
-    evalCtx = expr.newContext();
-    expr.eval(evalCtx, null, null);
-    assertFalse(expr.terminate(evalCtx).asBool());
-
-    expr = new BinaryEval(Type.GTH, e2, e1);
-    evalCtx = expr.newContext();
-    expr.eval(evalCtx, null, null);
-    assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GEQ, e2, e1);
-    evalCtx = expr.newContext();
-    expr.eval(evalCtx, null, null);
-    assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GTH, e1, e2);
-    evalCtx = expr.newContext();
-    expr.eval(evalCtx, null, null);
-    assertFalse(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GEQ, e1, e2);
+    expr = new BinaryEval(EvalType.LEQ, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
 
-    BinaryEval plus = new BinaryEval(Type.PLUS, e1, e2);
-    evalCtx = expr.newContext();
-    expr = new BinaryEval(Type.LTH, e1, plus);
+    expr = new BinaryEval(EvalType.GTH, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LEQ, e1, plus);
+    expr = new BinaryEval(EvalType.GEQ, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LTH, plus, e1);
+    expr = new BinaryEval(EvalType.GTH, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.LEQ, plus, e1);
+    expr = new BinaryEval(EvalType.GEQ, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
 
-    expr = new BinaryEval(Type.GTH, plus, e1);
+    BinaryEval plus = new BinaryEval(EvalType.PLUS, e1, e2);
+    expr = new BinaryEval(EvalType.LTH, e1, plus);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GEQ, plus, e1);
+    expr = new BinaryEval(EvalType.LEQ, e1, plus);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GTH, e1, plus);
+    expr = new BinaryEval(EvalType.LTH, plus, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
-    expr = new BinaryEval(Type.GEQ, e1, plus);
+    expr = new BinaryEval(EvalType.LEQ, plus, e1);
+    evalCtx = expr.newContext();
+    expr.eval(evalCtx, null, null);
+    assertFalse(expr.terminate(evalCtx).asBool());
+
+    expr = new BinaryEval(EvalType.GTH, plus, e1);
+    evalCtx = expr.newContext();
+    expr.eval(evalCtx, null, null);
+    assertTrue(expr.terminate(evalCtx).asBool());
+    expr = new BinaryEval(EvalType.GEQ, plus, e1);
+    evalCtx = expr.newContext();
+    expr.eval(evalCtx, null, null);
+    assertTrue(expr.terminate(evalCtx).asBool());
+    expr = new BinaryEval(EvalType.GTH, e1, plus);
+    evalCtx = expr.newContext();
+    expr.eval(evalCtx, null, null);
+    assertFalse(expr.terminate(evalCtx).asBool());
+    expr = new BinaryEval(EvalType.GEQ, e1, plus);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
@@ -417,7 +422,7 @@ public class TestEvalTree {
     // PLUS
     e1 = new ConstEval(DatumFactory.createInt4(9));
     e2 = new ConstEval(DatumFactory.createInt4(34));
-    BinaryEval expr = new BinaryEval(Type.PLUS, e1, e2);
+    BinaryEval expr = new BinaryEval(EvalType.PLUS, e1, e2);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertEquals(expr.terminate(evalCtx).asInt4(), 43);
@@ -426,7 +431,7 @@ public class TestEvalTree {
     // MINUS
     e1 = new ConstEval(DatumFactory.createInt4(5));
     e2 = new ConstEval(DatumFactory.createInt4(2));
-    expr = new BinaryEval(Type.MINUS, e1, e2);
+    expr = new BinaryEval(EvalType.MINUS, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertEquals(expr.terminate(evalCtx).asInt4(), 3);
@@ -435,7 +440,7 @@ public class TestEvalTree {
     // MULTIPLY
     e1 = new ConstEval(DatumFactory.createInt4(5));
     e2 = new ConstEval(DatumFactory.createInt4(2));
-    expr = new BinaryEval(Type.MULTIPLY, e1, e2);
+    expr = new BinaryEval(EvalType.MULTIPLY, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertEquals(expr.terminate(evalCtx).asInt4(), 10);
@@ -444,7 +449,7 @@ public class TestEvalTree {
     // DIVIDE
     e1 = new ConstEval(DatumFactory.createInt4(10));
     e2 = new ConstEval(DatumFactory.createInt4(5));
-    expr = new BinaryEval(Type.DIVIDE, e1, e2);
+    expr = new BinaryEval(EvalType.DIVIDE, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertEquals(expr.terminate(evalCtx).asInt4(), 2);
@@ -459,10 +464,10 @@ public class TestEvalTree {
     // PLUS
     e1 = new ConstEval(DatumFactory.createInt4(9));
     e2 = new ConstEval(DatumFactory.createInt4(34));
-    BinaryEval expr = new BinaryEval(Type.PLUS, e1, e2);
+    BinaryEval expr = new BinaryEval(EvalType.PLUS, e1, e2);
     assertEquals(CatalogUtil.newDataTypeWithoutLen(INT4), expr.getValueType()[0]);
 
-    expr = new BinaryEval(Type.LTH, e1, e2);
+    expr = new BinaryEval(EvalType.LTH, e1, e2);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -470,7 +475,7 @@ public class TestEvalTree {
 
     e1 = new ConstEval(DatumFactory.createFloat8(9.3));
     e2 = new ConstEval(DatumFactory.createFloat8(34.2));
-    expr = new BinaryEval(Type.PLUS, e1, e2);
+    expr = new BinaryEval(EvalType.PLUS, e1, e2);
     assertEquals(CatalogUtil.newDataTypeWithoutLen(FLOAT8), expr.getValueType()[0]);
   }
   
@@ -484,23 +489,23 @@ public class TestEvalTree {
     e2 = new ConstEval(DatumFactory.createInt4(34));
     assertEquals(e1, e2);
     
-    BinaryEval plus1 = new BinaryEval(Type.PLUS, e1, e2);
-    BinaryEval plus2 = new BinaryEval(Type.PLUS, e2, e1);
+    BinaryEval plus1 = new BinaryEval(EvalType.PLUS, e1, e2);
+    BinaryEval plus2 = new BinaryEval(EvalType.PLUS, e2, e1);
     assertEquals(plus1, plus2);
     
     ConstEval e3 = new ConstEval(DatumFactory.createInt4(29));
-    BinaryEval plus3 = new BinaryEval(Type.PLUS, e1, e3);
+    BinaryEval plus3 = new BinaryEval(EvalType.PLUS, e1, e3);
     assertFalse(plus1.equals(plus3));
     
     // LTH
     ConstEval e4 = new ConstEval(DatumFactory.createInt4(9));
     ConstEval e5 = new ConstEval(DatumFactory.createInt4(34));
-    BinaryEval compExpr1 = new BinaryEval(Type.LTH, e4, e5);
+    BinaryEval compExpr1 = new BinaryEval(EvalType.LTH, e4, e5);
     assertCloneEqual(compExpr1);
     
     ConstEval e6 = new ConstEval(DatumFactory.createInt4(9));
     ConstEval e7 = new ConstEval(DatumFactory.createInt4(34));
-    BinaryEval compExpr2 = new BinaryEval(Type.LTH, e6, e7);
+    BinaryEval compExpr2 = new BinaryEval(EvalType.LTH, e6, e7);
     assertCloneEqual(compExpr2);
     
     assertTrue(compExpr1.equals(compExpr2));
@@ -516,19 +521,19 @@ public class TestEvalTree {
     e2 = new ConstEval(DatumFactory.createInt4(5));
     assertCloneEqual(e1); 
     
-    BinaryEval plus1 = new BinaryEval(Type.PLUS, e1, e2);
+    BinaryEval plus1 = new BinaryEval(EvalType.PLUS, e1, e2);
     assertCloneEqual(plus1);
-    BinaryEval plus2 = new BinaryEval(Type.PLUS, e2, e1);
+    BinaryEval plus2 = new BinaryEval(EvalType.PLUS, e2, e1);
     assertCloneEqual(plus2);
-    BinaryEval plus3 = new BinaryEval(Type.PLUS, plus2, plus1);
+    BinaryEval plus3 = new BinaryEval(EvalType.PLUS, plus2, plus1);
     assertCloneEqual(plus3);
     
     ConstEval e3 = new ConstEval(DatumFactory.createInt4(29));
-    BinaryEval gth = new BinaryEval(Type.GTH, e3, plus3);
+    BinaryEval gth = new BinaryEval(EvalType.GTH, e3, plus3);
     assertCloneEqual(gth);
     
-    String json = gth.toJSON();
-    EvalNode eval = GsonCreator.getInstance().fromJson(json, EvalNode.class);
+    String json = gth.toJson();
+    EvalNode eval = CoreGsonHelper.fromJson(json, EvalNode.class);
     assertCloneEqual(eval);
     
     assertEquals(gth.getType(), eval.getType());
@@ -561,7 +566,7 @@ public class TestEvalTree {
     // Constant
     e1 = new ConstEval(DatumFactory.createInt4(9));
     e2 = new ConstEval(DatumFactory.createInt4(34));
-    expr = new BinaryEval(Type.LTH, e1, e2);
+    expr = new BinaryEval(EvalType.LTH, e1, e2);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -570,7 +575,7 @@ public class TestEvalTree {
     not.eval(evalCtx, null, null);
     assertFalse(not.terminate(evalCtx).asBool());
     
-    expr = new BinaryEval(Type.LEQ, e1, e2);
+    expr = new BinaryEval(EvalType.LEQ, e1, e2);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -579,7 +584,7 @@ public class TestEvalTree {
     not.eval(evalCtx, null, null);
     assertFalse(not.terminate(evalCtx).asBool());
     
-    expr = new BinaryEval(Type.LTH, e2, e1);
+    expr = new BinaryEval(EvalType.LTH, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
@@ -588,7 +593,7 @@ public class TestEvalTree {
     not.eval(evalCtx, null, null);
     assertTrue(not.terminate(evalCtx).asBool());
     
-    expr = new BinaryEval(Type.LEQ, e2, e1);
+    expr = new BinaryEval(EvalType.LEQ, e2, e1);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, null, null);
     assertFalse(expr.terminate(evalCtx).asBool());
@@ -598,10 +603,8 @@ public class TestEvalTree {
     assertTrue(not.terminate(evalCtx).asBool());
     
     // Evaluation Test
-    QueryBlock block;
     Schema peopleSchema = cat.getTableDesc("people").getMeta().getSchema();
-    block = (QueryBlock) analyzer.parse(NOT[0]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(NOT[0]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -619,12 +622,10 @@ public class TestEvalTree {
   
   @Test
   public final void testLike() {
-    QueryBlock block;
     EvalNode expr;
 
     Schema peopleSchema = cat.getTableDesc("people").getMeta().getSchema();
-    block = (QueryBlock) analyzer.parse(LIKE[0]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(LIKE[0]);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -634,8 +635,7 @@ public class TestEvalTree {
     assertTrue(expr.terminate(evalCtx).asBool());
     
     // prefix
-    block = (QueryBlock) analyzer.parse(LIKE[1]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(LIKE[1]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
     assertTrue(expr.terminate(evalCtx).asBool());
@@ -645,8 +645,7 @@ public class TestEvalTree {
     assertFalse(expr.terminate(evalCtx).asBool());
 
     // Not Test
-    block = (QueryBlock) analyzer.parse(LIKE[2]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(LIKE[2]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
     assertFalse(expr.terminate(evalCtx).asBool());
@@ -663,16 +662,13 @@ public class TestEvalTree {
 
   @Test
   public void testIsNullEval() {
-    QueryBlock block;
     EvalNode expr;
 
-    block = (QueryBlock) analyzer.parse(IS_NULL[0]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(IS_NULL[0]);
 
     assertIsNull(expr);
 
-    block = (QueryBlock) analyzer.parse(IS_NULL[1]).getParseTree();
-    expr = block.getWhereCondition();
+    expr = getRootSelection(IS_NULL[1]);
 
     IsNullEval nullEval = (IsNullEval) expr;
     assertTrue(nullEval.isNot());
@@ -680,12 +676,16 @@ public class TestEvalTree {
   }
 
   private void assertIsNull(EvalNode isNullEval) {
-    assertEquals(Type.IS, isNullEval.getType());
-    assertEquals(Type.FIELD, isNullEval.getLeftExpr().getType());
+    assertEquals(EvalType.IS_NULL, isNullEval.getType());
+    assertEquals(EvalType.FIELD, isNullEval.getLeftExpr().getType());
     FieldEval left = (FieldEval) isNullEval.getLeftExpr();
     assertEquals("name", left.getColumnName());
-    assertEquals(Type.CONST, isNullEval.getRightExpr().getType());
-    ConstEval constEval = (ConstEval) isNullEval.getRightExpr();
-    assertEquals(DatumFactory.createNullDatum(), constEval.getValue());
+    assertEquals(EvalType.CONST, isNullEval.getRightExpr().getType());
+  }
+
+  private static void assertJsonSerDer(EvalNode expr) {
+    String json = expr.toJson();
+    EvalNode fromJson = CoreGsonHelper.fromJson(json, EvalNode.class);
+    assertEquals(expr, fromJson);
   }
 }

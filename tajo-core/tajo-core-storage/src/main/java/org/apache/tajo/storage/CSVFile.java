@@ -19,6 +19,7 @@
 package org.apache.tajo.storage;
 
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -32,11 +33,11 @@ import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.datum.*;
 import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
-import org.apache.tajo.storage.json.GsonCreator;
+import org.apache.tajo.storage.json.StorageGsonHelper;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.Arrays;
 
 public class CSVFile {
   public static final String DELIMITER = "csvfile.delimiter";
@@ -49,16 +50,14 @@ public class CSVFile {
     private final FileSystem fs;
     private FSDataOutputStream fos;
     private String delimiter;
-
     private TableStatistics stats = null;
 
     public CSVAppender(Configuration conf, final TableMeta meta,
-        final Path path) throws IOException {
+                       final Path path) throws IOException {
       super(conf, meta, path);
       this.fs = path.getFileSystem(conf);
       this.meta = meta;
       this.schema = meta.getSchema();
-
       this.delimiter = this.meta.getOption(DELIMITER, DELIMITER_DEFAULT);
     }
 
@@ -95,60 +94,60 @@ public class CSVFile {
         } else {
           col = schema.getColumn(i);
           switch (col.getDataType().getType()) {
-          case BOOLEAN:
-            sb.append(tuple.getBoolean(i));
-            break;
-          case BIT:
-            sb.append(new String(Base64.encodeBase64(tuple.getByte(i)
-                .asByteArray(), false)));
-            break;
-          case BLOB:
-            sb.append(new String(Base64.encodeBase64(tuple.getBytes(i)
-                .asByteArray(), false)));
-            break;
-          case CHAR:
-            sb.append(tuple.getChar(i));
-            break;
-//          case STRING:
-//            sb.append(tuple.getString(i));
-//            break;
-          case TEXT:
-            TextDatum td = tuple.getText(i);
-            sb.append(td.toString());
-            break;
-          case INT2:
-            sb.append(tuple.getShort(i));
-            break;
-          case INT4:
-            sb.append(tuple.getInt(i));
-            break;
-          case INT8:
-            sb.append(tuple.getLong(i));
-            break;
-          case FLOAT4:
-            sb.append(tuple.getFloat(i));
-            break;
-          case FLOAT8:
-            sb.append(tuple.getDouble(i));
-            break;
-          case INET4:
-            sb.append(tuple.getIPv4(i));
-            break;
-          case INET6:
-            sb.append(tuple.getIPv6(i));
-          case ARRAY:
+            case BOOLEAN:
+              sb.append(tuple.getBoolean(i));
+              break;
+            case BIT:
+              sb.append(new String(Base64.encodeBase64(tuple.getByte(i)
+                  .asByteArray(), false)));
+              break;
+            case BLOB:
+              sb.append(new String(Base64.encodeBase64(tuple.getBytes(i)
+                  .asByteArray(), false)));
+              break;
+            case CHAR:
+              CharDatum charDatum = tuple.getChar(i);
+              sb.append(charDatum);
+              byte[] pad = new byte[col.getDataType().getLength()-charDatum.size()];
+              sb.append(new String(pad));
+              break;
+            case TEXT:
+              TextDatum td = tuple.getText(i);
+              sb.append(td.toString());
+              break;
+            case INT2:
+              sb.append(tuple.getShort(i));
+              break;
+            case INT4:
+              sb.append(tuple.getInt(i));
+              break;
+            case INT8:
+              sb.append(tuple.getLong(i));
+              break;
+            case FLOAT4:
+              sb.append(tuple.getFloat(i));
+              break;
+            case FLOAT8:
+              sb.append(tuple.getDouble(i));
+              break;
+            case INET4:
+              sb.append(tuple.getIPv4(i));
+              break;
+            case INET6:
+              sb.append(tuple.getIPv6(i));
+            case ARRAY:
             /*
              * sb.append("["); boolean first = true; ArrayDatum array =
              * (ArrayDatum) tuple.get(i); for (Datum field : array.toArray()) {
              * if (first) { first = false; } else { sb.append(delimiter); }
              * sb.append(field.asChars()); } sb.append("]");
              */
-            ArrayDatum array = (ArrayDatum) tuple.get(i);
-            sb.append(array.toJSON());
-            break;
-          default:
-            throw new UnsupportedOperationException("Cannot write such field: "
-                + tuple.get(i).type());
+              ArrayDatum array = (ArrayDatum) tuple.get(i);
+              sb.append(array.toJson());
+              break;
+            default:
+              throw new UnsupportedOperationException("Cannot write such field: "
+                  + tuple.get(i).type());
           }
         }
         sb.append(delimiter);
@@ -196,15 +195,14 @@ public class CSVFile {
 
   public static class CSVScanner extends FileScanner implements SeekableScanner {
     public CSVScanner(Configuration conf, final TableMeta meta,
-        final Fragment fragment) throws IOException {
+                      final Fragment fragment) throws IOException {
       super(conf, meta, fragment);
-      init(fragment);
     }
 
     private static final byte LF = '\n';
-    private final static long DEFAULT_BUFFER_SIZE = 65536;
+    private final static long DEFAULT_BUFFER_SIZE = 256 * 1024;
     private long bufSize;
-    private String delimiter;
+    private char delimiter;
     private FileSystem fs;
     private FSDataInputStream fis;
     private long startOffset, length, startPos;
@@ -215,17 +213,15 @@ public class CSVFile {
     private byte[] tail = null;
     private long pageStart = -1;
     private long prevTailLen = -1;
-    private HashMap<Long, Integer> curTupleOffsetMap = null;
+    private int[] targetColumnIndexes;
 
-    private void init(final Fragment fragment) throws IOException {
+    @Override
+    public void init() throws IOException {
 
       // Buffer size, Delimiter
       this.bufSize = DEFAULT_BUFFER_SIZE;
-      this.delimiter = fragment.getMeta().getOption(DELIMITER,
-          DELIMITER_DEFAULT);
-      if (this.delimiter.equals("|")) {
-        this.delimiter = "\\|";
-      }
+      String delim  = fragment.getMeta().getOption(DELIMITER, DELIMITER_DEFAULT);
+      this.delimiter = delim.charAt(0);
 
       // Fragment information
       this.fs = fragment.getPath().getFileSystem(this.conf);
@@ -233,6 +229,21 @@ public class CSVFile {
       this.startOffset = fragment.getStartOffset();
       this.length = fragment.getLength();
       tuples = new String[0];
+
+      if (targets == null) {
+        targets = schema.toArray();
+      }
+
+      targetColumnIndexes = new int[targets.length];
+      for (int i = 0; i < targets.length; i++) {
+        targetColumnIndexes[i] = schema.getColumnIdByName(targets[i].getColumnName());
+      }
+      super.init();
+
+      if(LOG.isDebugEnabled()) {
+        LOG.debug("CSVScanner open:" + fragment.getPath() + "," + startOffset + "," + length +
+            "," + fs.getFileStatus(fragment.getPath()).getLen());
+      }
 
       if (startOffset != 0) {
         fis.seek(startOffset - 1);
@@ -275,11 +286,11 @@ public class CSVFile {
         buf = new byte[(int) bufSize];
         rbyte = fis.read(buf);
         tail = new byte[0];
-        tuples = new String(buf,0,rbyte).split("\n");
+        tuples = StringUtils.split(new String(buf, 0, rbyte), (char)LF);
       } else {
         buf = new byte[(int) bufSize];
         rbyte = fis.read(buf);
-        tuples = (new String(tail) + new String(buf,0,rbyte)).split("\n");
+        tuples = StringUtils.split(new String(tail) + new String(buf, 0, rbyte), (char)LF);
       }
 
       // Check tail
@@ -291,10 +302,8 @@ public class CSVFile {
           while ((temp[cnt] = fis.readByte()) != LF) {
             cnt++;
           }
-
           // Replace tuple
-          tuples[tuples.length - 1] = new String(tuples[tuples.length - 1]
-              + new String(temp,0,cnt));
+          tuples[tuples.length - 1] = tuples[tuples.length - 1] + new String(temp, 0, cnt);
           validIdx = tuples.length;
         } else {
           tail = tuples[tuples.length - 1].getBytes();
@@ -309,23 +318,11 @@ public class CSVFile {
 
     private void makeTupleOffset() {
       long curTupleOffset = 0;
-      this.tupleOffsets = null;
       this.tupleOffsets = new long[this.validIdx];
-      
-      this.curTupleOffsetMap = null;
-      this.curTupleOffsetMap = new HashMap<Long, Integer>();
-      
       for (int i = 0; i < this.validIdx; i++) {
         this.tupleOffsets[i] = curTupleOffset + this.pageStart;
-        this.curTupleOffsetMap.put(tupleOffsets[i], i);
-        curTupleOffset += (this.tuples[i]  + "\n").getBytes().length;
+        curTupleOffset += this.tuples[i].getBytes().length + 1;//tuple byte +  1byte line feed
       }
-      
-    }
-
-    @Override
-    public void init() throws IOException {
-      super.init();
     }
 
     @Override
@@ -340,64 +337,62 @@ public class CSVFile {
           }
         }
         long offset = this.tupleOffsets[currentIdx];
-        String[] cells = tuples[currentIdx++].split(delimiter);
-        VTuple tuple = new VTuple(schema.getColumnNum());
+        String[] cells = StringUtils.splitPreserveAllTokens(tuples[currentIdx++], delimiter);
+        int targetLen = targets.length;
+        VTuple tuple = new VTuple(columnNum);
         Column field;
         tuple.setOffset(offset);
-        for (int i = 0; i < schema.getColumnNum(); i++) {
-          field = schema.getColumn(i);
-          if (cells.length <= i) {
-            tuple.put(i, DatumFactory.createNullDatum());
+        for (int i = 0; i < targetLen; i++) {
+          field = targets[i];
+          int tid = targetColumnIndexes[i];
+          if (cells.length <= tid) {
+            tuple.put(tid, DatumFactory.createNullDatum());
           } else {
-            String cell = cells[i].trim();
+            String cell = cells[tid].trim();
 
             if (cell.equals("")) {
-              tuple.put(i, DatumFactory.createNullDatum());
+              tuple.put(tid, DatumFactory.createNullDatum());
             } else {
               switch (field.getDataType().getType()) {
-              case BOOLEAN:
-                tuple.put(i, DatumFactory.createBool(cell));
-                break;
-              case BIT:
-                tuple.put(i,
-                    DatumFactory.createBit(Base64.decodeBase64(cell)[0]));
-                break;
-              case CHAR:
-                tuple.put(i, DatumFactory.createChar(cell.charAt(0)));
-                break;
-              case BLOB:
-                tuple.put(i,
-                    DatumFactory.createBlob(Base64.decodeBase64(cell)));
-                break;
-              case INT2:
-                tuple.put(i, DatumFactory.createInt2(cell));
-                break;
-              case INT4:
-                tuple.put(i, DatumFactory.createInt4(cell));
-                break;
-              case INT8:
-                tuple.put(i, DatumFactory.createInt8(cell));
-                break;
-              case FLOAT4:
-                tuple.put(i, DatumFactory.createFloat4(cell));
-                break;
-              case FLOAT8:
-                tuple.put(i, DatumFactory.createFloat8(cell));
-                break;
-//              case STRING:
-//                tuple.put(i, DatumFactory.createText(cell));
-//                break;
-              case TEXT:
-                tuple.put(i, DatumFactory.createText(cell));
-                break;
-              case INET4:
-                tuple.put(i, DatumFactory.createInet4(cell));
-                break;
-              case ARRAY:
-                Datum data = GsonCreator.getInstance().fromJson(cell,
-                    Datum.class);
-                tuple.put(i, data);
-                break;
+                case BOOLEAN:
+                  tuple.put(tid, DatumFactory.createBool(cell));
+                  break;
+                case BIT:
+                  tuple.put(tid, DatumFactory.createBit(Base64.decodeBase64(cell)[0]));
+                  break;
+                case CHAR:
+                  String trimmed = cell.trim();
+                  tuple.put(tid, DatumFactory.createChar(trimmed));
+                  break;
+                case BLOB:
+                  tuple.put(tid, DatumFactory.createBlob(Base64.decodeBase64(cell)));
+                  break;
+                case INT2:
+                  tuple.put(tid, DatumFactory.createInt2(cell));
+                  break;
+                case INT4:
+                  tuple.put(tid, DatumFactory.createInt4(cell));
+                  break;
+                case INT8:
+                  tuple.put(tid, DatumFactory.createInt8(cell));
+                  break;
+                case FLOAT4:
+                  tuple.put(tid, DatumFactory.createFloat4(cell));
+                  break;
+                case FLOAT8:
+                  tuple.put(tid, DatumFactory.createFloat8(cell));
+                  break;
+                case TEXT:
+                  tuple.put(tid, DatumFactory.createText(cell));
+                  break;
+                case INET4:
+                  tuple.put(tid, DatumFactory.createInet4(cell));
+                  break;
+                case ARRAY:
+                  Datum data = StorageGsonHelper.getInstance().fromJson(cell,
+                      Datum.class);
+                  tuple.put(tid, data);
+                  break;
               }
             }
           }
@@ -412,7 +407,7 @@ public class CSVFile {
 
     @Override
     public void reset() throws IOException {
-      init(fragment);
+      init();
     }
 
     @Override
@@ -422,11 +417,7 @@ public class CSVFile {
 
     @Override
     public boolean isProjectable() {
-      return false;
-    }
-
-    @Override
-    public void setTarget(Column[] targets) {
+      return true;
     }
 
     @Override
@@ -440,9 +431,10 @@ public class CSVFile {
 
     @Override
     public void seek(long offset) throws IOException {
-      if (this.curTupleOffsetMap.containsKey(offset)) {
-        this.currentIdx = this.curTupleOffsetMap.get(offset);
-      } else if (offset >= this.pageStart + this.bufSize 
+      int tupleIndex = Arrays.binarySearch(this.tupleOffsets, offset);
+      if (tupleIndex > -1) {
+        this.currentIdx = tupleIndex;
+      } else if (offset >= this.pageStart + this.bufSize
           + this.prevTailLen - this.tail.length || offset <= this.pageStart) {
         fis.seek(offset);
         tail = new byte[0];
@@ -453,10 +445,10 @@ public class CSVFile {
         // pageBuffer();
       } else {
         throw new IOException("invalid offset " +
-           " < pageStart : " +  this.pageStart + " , " + 
-           "  pagelength : " + this.bufSize + " , " + 
-           "  tail lenght : " + this.tail.length + 
-           "  input offset : " + offset + " >");
+            " < pageStart : " +  this.pageStart + " , " +
+            "  pagelength : " + this.bufSize + " , " +
+            "  tail lenght : " + this.tail.length +
+            "  input offset : " + offset + " >");
       }
 
     }
@@ -471,6 +463,11 @@ public class CSVFile {
         }
       }
       return this.tupleOffsets[currentIdx];
+    }
+
+    @Override
+    public boolean isSplittable(){
+      return true;
     }
   }
 }

@@ -25,7 +25,6 @@ import org.apache.tajo.catalog.function.AggFunction;
 import org.apache.tajo.catalog.function.FunctionContext;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
-import org.apache.tajo.engine.json.GsonCreator;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.VTuple;
 
@@ -35,15 +34,13 @@ public class AggFuncCallEval extends FuncEval implements Cloneable {
   private Tuple params;
 
   public AggFuncCallEval(FunctionDesc desc, AggFunction instance, EvalNode[] givenArgs) {
-    super(Type.AGG_FUNCTION, desc, givenArgs);
+    super(EvalType.AGG_FUNCTION, desc, givenArgs);
     this.instance = instance;
   }
 
   @Override
   public EvalContext newContext() {
-    AggFunctionCtx newCtx = new AggFunctionCtx(argEvals, instance.newContext());
-
-    return newCtx;
+    return new AggFunctionCtx(argEvals, instance.newContext());
   }
 
   @Override
@@ -87,13 +84,8 @@ public class AggFuncCallEval extends FuncEval implements Cloneable {
     }
   }
 
-  public String toJSON() {
-	  return GsonCreator.getInstance().toJson(this, EvalNode.class);
-  }
-
   public Object clone() throws CloneNotSupportedException {
-    AggFuncCallEval agg = (AggFuncCallEval) super.clone();
-    return agg;
+    return super.clone();
   }
 
   public void setFirstPhase() {

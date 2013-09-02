@@ -37,22 +37,22 @@ import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStat;
-import org.apache.tajo.engine.MasterWorkerProtos.*;
 import org.apache.tajo.engine.exception.UnfinishedTaskException;
-import org.apache.tajo.engine.json.GsonCreator;
+import org.apache.tajo.engine.json.CoreGsonHelper;
 import org.apache.tajo.engine.planner.PlannerUtil;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.logical.SortNode;
 import org.apache.tajo.engine.planner.logical.StoreTableNode;
 import org.apache.tajo.engine.planner.physical.PhysicalExec;
-import org.apache.tajo.ipc.MasterWorkerProtocol.MasterWorkerProtocolService.Interface;
+import org.apache.tajo.ipc.TajoWorkerProtocol.*;
+import org.apache.tajo.ipc.TajoWorkerProtocol.TajoWorkerProtocolService.Interface;
 import org.apache.tajo.ipc.protocolrecords.QueryUnitRequest;
 import org.apache.tajo.master.ExecutionBlock.PartitionType;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.storage.Fragment;
 import org.apache.tajo.storage.StorageUtil;
 import org.apache.tajo.storage.TupleComparator;
-import org.apache.tajo.worker.TaskRunner.WorkerContext;
+import org.apache.tajo.util.ApplicationIdUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -70,7 +70,7 @@ public class Task {
 
   private final QueryConf conf;
   private final FileSystem localFS;
-  private final WorkerContext workerContext;
+  private final TaskRunner.TaskRunnerContext taskRunnerContext;
   private final Interface masterProxy;
   private final LocalDirAllocator lDirAllocator;
   private final QueryUnitAttemptId taskId;
@@ -128,33 +128,32 @@ public class Task {
       };
 
   public Task(QueryUnitAttemptId taskId,
-              final WorkerContext worker, final Interface masterProxy,
+              final TaskRunner.TaskRunnerContext worker, final Interface masterProxy,
               final QueryUnitRequest request) throws IOException {
     this.request = request;
     this.reporter = new Reporter(masterProxy);
     this.reporter.startCommunicationThread();
 
     this.taskId = request.getId();
-    this.conf = worker.getConf();
-    this.workerContext = worker;
+    this.conf = worker.getQueryConf();
+    this.taskRunnerContext = worker;
     this.masterProxy = masterProxy;
     this.localFS = worker.getLocalFS();
     this.lDirAllocator = worker.getLocalDirAllocator();
-    this.taskDir = StorageUtil.concatPath(workerContext.getBaseDir(),
+    this.taskDir = StorageUtil.concatPath(taskRunnerContext.getBaseDir(),
         taskId.getQueryUnitId().getId() + "_" + taskId.getId());
 
     this.context = new TaskAttemptContext(conf, taskId,
         request.getFragments().toArray(new Fragment[request.getFragments().size()]),
         taskDir);
-    plan = GsonCreator.getInstance().fromJson(request.getSerializedData(),
-        LogicalNode.class);
+    plan = CoreGsonHelper.fromJson(request.getSerializedData(), LogicalNode.class);
     interQuery = request.getProto().getInterQuery();
     if (interQuery) {
       context.setInterQuery();
       StoreTableNode store = (StoreTableNode) plan;
       this.partitionType = store.getPartitionType();
       if (partitionType == PartitionType.RANGE) {
-        SortNode sortNode = (SortNode) store.getSubNode();
+        SortNode sortNode = (SortNode) store.getChild();
         this.finalSchema = PlannerUtil.sortSpecsToSchema(sortNode.getSortKeys());
         this.sortComp = new TupleComparator(finalSchema, sortNode.getSortKeys());
       }
@@ -163,7 +162,7 @@ public class Task {
       // where ss is the subquery id associated with this task, and nnnnnn is the task id.
       Path outFilePath = new Path(conf.getOutputPath(),
           OUTPUT_FILE_PREFIX +
-          OUTPUT_FILE_FORMAT_SUBQUERY.get().format(taskId.getSubQueryId().getId()) + "-" +
+          OUTPUT_FILE_FORMAT_SUBQUERY.get().format(taskId.getQueryUnitId().getExecutionBlockId().getId()) + "-" +
           OUTPUT_FILE_FORMAT_TASK.get().format(taskId.getQueryUnitId().getId()));
       LOG.info("Output File Path: " + outFilePath);
       context.setOutputPath(outFilePath);
@@ -177,7 +176,7 @@ public class Task {
 
     LOG.info("* Fragments (num: " + request.getFragments().size() + ")");
     for (Fragment f: request.getFragments()) {
-      LOG.info("==> Table Id:" + f.getId() + ", path:" + f.getPath() + "(" + f.getMeta().getStoreType() + "), " +
+      LOG.info("==> Table Id:" + f.getName() + ", path:" + f.getPath() + "(" + f.getMeta().getStoreType() + "), " +
           "(start:" + f.getStartOffset() + ", length: " + f.getLength() + ")");
     }
     LOG.info("* Fetches (total:" + request.getFetches().size() + ") :");
@@ -185,8 +184,10 @@ public class Task {
       LOG.info("==> Table Id: " + f.getName() + ", url: " + f.getUrls());
     }
     LOG.info("* Local task dir: " + taskDir);
-    LOG.info("* plan:\n");
-    LOG.info(plan.toString());
+    if(LOG.isDebugEnabled()) {
+      LOG.debug("* plan:\n");
+      LOG.debug(plan.toString());
+    }
     LOG.info("==================================");
   }
 
@@ -208,7 +209,6 @@ public class Task {
         }
       }
     }
-
     // for localizing the intermediate data
     localize(request);
   }
@@ -244,7 +244,7 @@ public class Task {
       int i = fetcherRunners.size();
       for (Fragment cache : cached) {
         inFile = new Path(inputTableBaseDir, "in_" + i);
-        workerContext.getDefaultFS().copyToLocalFile(cache.getPath(), inFile);
+        taskRunnerContext.getDefaultFS().copyToLocalFile(cache.getPath(), inFile);
         cache.setPath(inFile);
         i++;
       }
@@ -274,7 +274,7 @@ public class Task {
 
   public void fetch() {
     for (Fetcher f : fetcherRunners) {
-      workerContext.getFetchLauncher().submit(new FetchRunner(context, f));
+      taskRunnerContext.getFetchLauncher().submit(new FetchRunner(context, f));
     }
   }
 
@@ -299,8 +299,8 @@ public class Task {
         // context.getWorkDir() 지우기
         localFS.delete(context.getWorkDir(), true);
         // tasks에서 자기 지우기
-        synchronized (workerContext.getTasks()) {
-          workerContext.getTasks().remove(this.getId());
+        synchronized (taskRunnerContext.getTasks()) {
+          taskRunnerContext.getTasks().remove(this.getId());
         }
       } catch (IOException e) {
         e.printStackTrace();
@@ -313,7 +313,7 @@ public class Task {
 
   public TaskStatusProto getReport() {
     TaskStatusProto.Builder builder = TaskStatusProto.newBuilder();
-    builder.setWorkerName(workerContext.getNodeId());
+    builder.setWorkerName(taskRunnerContext.getNodeId());
     builder.setId(context.getTaskId().getProto())
         .setProgress(context.getProgress()).setState(context.getState());
 
@@ -369,7 +369,7 @@ public class Task {
       }
 
       if (context.getFragmentSize() > 0) {
-        this.executor = workerContext.getTQueryEngine().
+        this.executor = taskRunnerContext.getTQueryEngine().
             createPlan(context, plan);
         this.executor.init();
         while(executor.next() != null && !killed) {
@@ -431,7 +431,7 @@ public class Task {
   }
 
   public void cleanupTask() {
-    workerContext.getTasks().remove(getId());
+    taskRunnerContext.getTasks().remove(getId());
   }
 
   public int hashCode() {
@@ -461,7 +461,7 @@ public class Task {
       if (f.getLen() == 0) {
         continue;
       }
-      tablet = new Fragment(name, f.getPath(), meta, 0l, f.getLen(), null);
+      tablet = new Fragment(name, f.getPath(), meta, 0l, f.getLen());
       listTablets.add(tablet);
     }
 
@@ -624,7 +624,7 @@ public class Task {
   String fileCache;
   public String getFileCacheDir() {
     fileCache = USERCACHE + "/" + "hyunsik" + "/" + APPCACHE + "/" +
-        ConverterUtils.toString(taskId.getQueryId().getApplicationId()) +
+        ConverterUtils.toString(ApplicationIdUtils.queryIdToAppId(taskId.getQueryUnitId().getExecutionBlockId().getQueryId())) +
         "/" + "output";
     return fileCache;
   }
@@ -632,7 +632,7 @@ public class Task {
   public static Path getTaskAttemptDir(QueryUnitAttemptId quid) {
     Path workDir =
         StorageUtil.concatPath(
-            quid.getSubQueryId().toString(),
+            quid.getQueryUnitId().getExecutionBlockId().toString(),
             String.valueOf(quid.getQueryUnitId().getId()),
             String.valueOf(quid.getId()));
     return workDir;

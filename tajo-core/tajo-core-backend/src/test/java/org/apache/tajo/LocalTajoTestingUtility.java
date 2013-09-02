@@ -19,9 +19,14 @@
 package org.apache.tajo;
 
 import com.google.protobuf.ServiceException;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.tajo.catalog.*;
+import org.apache.tajo.catalog.CatalogUtil;
+import org.apache.tajo.catalog.Options;
+import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.client.TajoClient;
 import org.apache.tajo.conf.TajoConf;
@@ -30,6 +35,8 @@ import java.io.IOException;
 import java.sql.ResultSet;
 
 public class LocalTajoTestingUtility {
+  private static final Log LOG = LogFactory.getLog(LocalTajoTestingUtility.class);
+
   private TajoTestingCluster util;
   private TajoConf conf;
   private TajoClient client;
@@ -38,6 +45,9 @@ public class LocalTajoTestingUtility {
                     String[] tablepaths,
                     Schema[] schemas,
                     Options option) throws Exception {
+    LOG.info("===================================================");
+    LOG.info("Starting Test Cluster.");
+    LOG.info("===================================================");
 
     util = new TajoTestingCluster();
     util.startMiniCluster(1);
@@ -60,6 +70,11 @@ public class LocalTajoTestingUtility {
           CatalogProtos.StoreType.CSV, option);
       client.createTable(names[i], tablePath, meta);
     }
+
+    LOG.info("===================================================");
+    LOG.info("Test Cluster ready and test table created.");
+    LOG.info("===================================================");
+
   }
 
   public TajoTestingCluster getTestingCluster() {
@@ -71,7 +86,11 @@ public class LocalTajoTestingUtility {
   }
 
   public void shutdown() throws IOException {
-    client.close();
-    util.shutdownMiniCluster();
+    if(client != null) {
+      client.close();
+    }
+    if(util != null) {
+      util.shutdownMiniCluster();
+    }
   }
 }

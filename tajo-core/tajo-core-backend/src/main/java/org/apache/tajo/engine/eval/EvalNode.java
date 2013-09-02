@@ -18,27 +18,24 @@
 
 package org.apache.tajo.engine.eval;
 
-import com.google.gson.Gson;
 import com.google.gson.annotations.Expose;
+import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
-import org.apache.tajo.engine.json.GsonCreator;
+import org.apache.tajo.engine.json.CoreGsonHelper;
 import org.apache.tajo.storage.Tuple;
 
-public abstract class EvalNode implements Cloneable {
-	@Expose
-	protected Type type;
-	@Expose
-	protected EvalNode leftExpr;
-	@Expose
-	protected EvalNode rightExpr;
+public abstract class EvalNode implements Cloneable, GsonObject {
+	@Expose protected EvalType type;
+	@Expose protected EvalNode leftExpr;
+	@Expose protected EvalNode rightExpr;
 	
-	public EvalNode(Type type) {
+	public EvalNode(EvalType type) {
 		this.type = type;
 	}
 	
-	public EvalNode(Type type, EvalNode left, EvalNode right) {
+	public EvalNode(EvalType type, EvalNode left, EvalNode right) {
 		this(type);
 		this.leftExpr = left;
 		this.rightExpr = right;
@@ -46,7 +43,7 @@ public abstract class EvalNode implements Cloneable {
 
   public abstract EvalContext newContext();
 	
-	public Type getType() {
+	public EvalType getType() {
 		return this.type;
 	}
 	
@@ -83,10 +80,10 @@ public abstract class EvalNode implements Cloneable {
 	public String toString() {
 		return "("+this.type+"("+leftExpr.toString()+" "+rightExpr.toString()+"))";
 	}
-	
-	public String toJSON() {
-	  Gson gson = GsonCreator.getInstance();
-    return gson.toJson(this, EvalNode.class);
+
+  @Override
+	public String toJson() {
+    return CoreGsonHelper.toJson(this, EvalNode.class);
 	}
 	
 	public void eval(EvalContext ctx, Schema schema, Tuple tuple) {}
@@ -103,42 +100,6 @@ public abstract class EvalNode implements Cloneable {
 	  leftExpr.postOrder(visitor);
 	  rightExpr.postOrder(visitor);	  	  
 	  visitor.visit(this);
-	}
-	
-	public static enum Type {
-    AGG_FUNCTION,
-    AND,
-	  OR,
-	  EQUAL("="),
-    IS,
-	  NOT_EQUAL("<>"),
-	  LTH("<"),
-	  LEQ("<="),
-	  GTH(">"),
-	  GEQ(">="),
-	  NOT("!"),
-	  PLUS("+"),
-    MINUS("-"),
-    MODULAR("%"),
-    MULTIPLY("*"),
-    DIVIDE("/"),
-	  FIELD,
-    FUNCTION,
-    LIKE,
-    CONST,
-    CASE,
-    WHEN;
-
-    private String represent;
-    Type() {
-    }
-    Type(String represent) {
-      this.represent = represent;
-    }
-
-    public String toString() {
-      return represent == null ? this.name() : represent;
-    }
 	}
 
   public abstract boolean equals(Object obj);

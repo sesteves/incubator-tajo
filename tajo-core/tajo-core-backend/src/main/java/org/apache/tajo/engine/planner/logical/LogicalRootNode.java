@@ -18,20 +18,13 @@
 
 package org.apache.tajo.engine.planner.logical;
 
-import org.apache.tajo.engine.json.GsonCreator;
-
 public class LogicalRootNode extends UnaryNode implements Cloneable {
   public LogicalRootNode() {
-    super(ExprType.ROOT);
+    super(NodeType.ROOT);
   }
   
   public String toString() {
-    return "Logical Plan Root\n\n" + getSubNode().toString();
-  }
-  
-  @Override
-  public String toJSON() {
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
+    return "Logical Plan Root\n\n" + getChild().toString();
   }
   
   @Override
@@ -39,7 +32,7 @@ public class LogicalRootNode extends UnaryNode implements Cloneable {
     if (obj instanceof LogicalRootNode) {
       LogicalRootNode other = (LogicalRootNode) obj;
       boolean b1 = super.equals(other);
-      boolean b2 = subExpr.equals(other.subExpr);
+      boolean b2 = child.equals(other.child);
       
       return b1 && b2;
     } else {

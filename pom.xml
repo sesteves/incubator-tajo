@@ -80,7 +80,6 @@
     <module>tajo-project</module>
     <module>tajo-common</module>
     <module>tajo-algebra</module>
-    <module>tajo-frontend</module>
     <module>tajo-core</module>
     <module>tajo-rpc</module>
     <module>tajo-catalog</module>
@@ -90,6 +89,14 @@
   <build>
     <pluginManagement>
       <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-report-plugin</artifactId>
+          <version>2.15</version>
+          <configuration>
+            <aggregate>true</aggregate>
+          </configuration>
+        </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
@@ -249,11 +256,6 @@
             </lifecycleMappingMetadata>
           </configuration>
         </plugin>
-        <plugin>
-          <groupId>org.antlr</groupId>
-          <artifactId>antlr3-maven-plugin</artifactId>
-          <version>3.4</version>
-        </plugin>
       </plugins>
     </pluginManagement>
 
@@ -303,9 +305,12 @@
           <numUnapprovedLicenses>0</numUnapprovedLicenses>
           <excludes>
             <exclude>CHANGES.txt</exclude>
+            <exclude>**/workers</exclude>
             <exclude>**/*.tql</exclude>
+            <exclude>**/*.sql</exclude>
             <exclude>**/*.schema</exclude>
             <exclude>**/*.tbl</exclude>
+            <exclude>**/*.jsp</exclude>
             <!-- generated content -->
             <exclude>**/target/**</exclude>
             <exclude>**/*.log</exclude>

@@ -26,7 +26,7 @@ import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.ArrayDatum;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
-import org.apache.tajo.datum.json.GsonCreator;
+import org.apache.tajo.json.CommonGsonHelper;
 import org.apache.tajo.util.BitArray;
 
 import java.io.File;
@@ -35,6 +35,7 @@ import java.io.RandomAccessFile;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.Arrays;
 
 public class RawFile {
   public static class RawFileScanner extends FileScanner implements SeekableScanner {
@@ -153,7 +154,11 @@ public class RawFile {
             break;
 
           case CHAR :
-            tuple.put(i, DatumFactory.createChar(buffer.getChar()));
+            int realLen = buffer.getInt();
+            byte[] buf = new byte[columnTypes[i].getLength()];
+            buffer.get(buf);
+            byte[] charBuf = Arrays.copyOf(buf, realLen);
+            tuple.put(i, DatumFactory.createChar(charBuf));
             break;
 
           case INT2 :
@@ -210,8 +215,7 @@ public class RawFile {
             byte [] arrayBytes = new byte[arrayByteSize];
             buffer.get(arrayBytes);
             String json = new String(arrayBytes);
-            ArrayDatum array = (ArrayDatum) GsonCreator
-                .getInstance().fromJson(json, Datum.class);
+            ArrayDatum array = (ArrayDatum) CommonGsonHelper.fromJson(json, Datum.class);
             tuple.put(i, array);
             break;
 
@@ -244,6 +248,11 @@ public class RawFile {
 
     @Override
     public boolean isSelectable() {
+      return false;
+    }
+
+    @Override
+    public boolean isSplittable(){
       return false;
     }
   }
@@ -359,7 +368,10 @@ public class RawFile {
             break;
 
           case CHAR :
-            buffer.putChar(t.get(i).asChar());
+            byte[] src = t.getChar(i).asByteArray();
+            byte[] dst = Arrays.copyOf(src, columnTypes[i].getLength());
+            buffer.putInt(src.length);
+            buffer.put(dst);
             break;
 
           case INT2 :
@@ -415,7 +427,7 @@ public class RawFile {
 
           case ARRAY :
             ArrayDatum array = (ArrayDatum) t.get(i);
-            String json = array.toJSON();
+            String json = array.toJson();
             byte [] jsonBytes = json.getBytes();
             if (flushBufferAndReplace(recordOffset, jsonBytes.length + 4)) {
               recordOffset = 0;

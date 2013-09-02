@@ -49,15 +49,15 @@ message UpdateQueryResponse {
   optional string errorMessage = 2;
 }
 
-message SubmitQueryRespose {
+message SubmitQueryResponse {
   required ResultCode resultCode = 1;
-  optional ApplicationAttemptIdProto queryId = 2;
+  optional string queryId = 2;
   optional string errorMessage = 3;
 }
 
 message GetQueryResultRequest {
   optional SessionIdProto sessionId = 1;
-  required ApplicationAttemptIdProto queryId = 2;
+  required string queryId = 2;
 }
 
 message GetQueryResultResponse {
@@ -70,7 +70,7 @@ message GetQueryListRequest {
 }
 
 message BriefQueryStatus {
-  required ApplicationAttemptIdProto queryId = 1;
+  required string queryId = 1;
   required QueryState state = 2;
   required int32 executionTime = 3;
 }
@@ -81,12 +81,12 @@ message GetQueryListResponse {
 
 message GetQueryStatusRequest {
   optional SessionIdProto sessionId = 1;
-  required ApplicationAttemptIdProto queryId = 2;
+  required string queryId = 2;
 }
 
 message GetQueryStatusResponse {
   required ResultCode resultCode = 1;
-  required ApplicationAttemptIdProto queryId = 2;
+  required string queryId = 2;
   optional QueryState state = 3;
   optional float progress = 4;
   optional int64 submitTime = 5;
@@ -94,6 +94,8 @@ message GetQueryStatusResponse {
   optional int64 finishTime = 7;
   optional bool hasResult = 8;
   optional string errorMessage = 9;
+  optional string queryMasterHost = 10;
+  optional int32 queryMasterPort = 11;
 }
 
 message GetClusterInfoRequest {
@@ -135,12 +137,12 @@ message TableResponse {
 
 service ClientProtocolService {
   rpc updateSessionVariables(UpdateSessionVariableRequest) returns (BoolProto);
-  rpc submitQuery(QueryRequest) returns (SubmitQueryRespose);
+  rpc submitQuery(QueryRequest) returns (SubmitQueryResponse);
   rpc updateQuery(QueryRequest) returns (UpdateQueryResponse);
   rpc getQueryResult(GetQueryResultRequest) returns (GetQueryResultResponse);
   rpc getQueryList(GetQueryListRequest) returns (GetQueryListResponse);
   rpc getQueryStatus(GetQueryStatusRequest) returns (GetQueryStatusResponse);
-  rpc killQuery(ApplicationAttemptIdProto) returns (BoolProto);
+  rpc killQuery(StringProto) returns (BoolProto);
   rpc getClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse);
   rpc existTable(StringProto) returns (BoolProto);
   rpc getTableList(GetTableListRequest) returns (GetTableListResponse);
@@ -149,7 +151,6 @@ service ClientProtocolService {
   rpc dropTable(StringProto) returns (BoolProto);
   rpc attachTable(AttachTableRequest) returns (TableResponse);
   rpc detachTable(StringProto) returns (BoolProto);
-
 
 
   // TODO - to be implemented

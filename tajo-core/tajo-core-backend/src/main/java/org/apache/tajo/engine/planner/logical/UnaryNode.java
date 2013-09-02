@@ -22,12 +22,10 @@
 package org.apache.tajo.engine.planner.logical;
 
 import com.google.gson.annotations.Expose;
-import org.apache.tajo.engine.json.GsonCreator;
 
 
 public abstract class UnaryNode extends LogicalNode implements Cloneable {
-	@Expose
-	LogicalNode subExpr;
+	@Expose LogicalNode child;
 	
 	public UnaryNode() {
 		super();
@@ -36,38 +34,33 @@ public abstract class UnaryNode extends LogicalNode implements Cloneable {
 	/**
 	 * @param type
 	 */
-	public UnaryNode(ExprType type) {
+	public UnaryNode(NodeType type) {
 		super(type);
 	}
 	
-	public void setSubNode(LogicalNode subNode) {
-		this.subExpr = subNode;
+	public void setChild(LogicalNode subNode) {
+		this.child = subNode;
 	}
 	
-	public LogicalNode getSubNode() {
-		return this.subExpr;
+	public LogicalNode getChild() {
+		return this.child;
 	}
 	
 	@Override
   public Object clone() throws CloneNotSupportedException {
 	  UnaryNode unary = (UnaryNode) super.clone();
-	  unary.subExpr = (LogicalNode) (subExpr == null ? null : subExpr.clone());
+	  unary.child = (LogicalNode) (child == null ? null : child.clone());
 	  
 	  return unary;
 	}
 	
 	public void preOrder(LogicalNodeVisitor visitor) {
 	  visitor.visit(this);
-	  subExpr.preOrder(visitor);
+	  child.preOrder(visitor);
   }
 	
 	public void postOrder(LogicalNodeVisitor visitor) {
-	  subExpr.postOrder(visitor);	  
+	  child.postOrder(visitor);
 	  visitor.visit(this);
 	}
-
-  public String toJSON() {
-    subExpr.toJSON();
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
-  }
 }

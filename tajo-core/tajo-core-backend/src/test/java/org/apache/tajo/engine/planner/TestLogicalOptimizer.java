@@ -19,18 +19,19 @@
 package org.apache.tajo.engine.planner;
 
 import org.apache.hadoop.fs.Path;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
 import org.apache.tajo.TajoTestingCluster;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.engine.function.builtin.SumInt;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.logical.*;
 import org.apache.tajo.master.TajoMaster;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static org.junit.Assert.*;
 
@@ -38,8 +39,9 @@ public class TestLogicalOptimizer {
 
   private static TajoTestingCluster util;
   private static CatalogService catalog;
-  private static QueryAnalyzer analyzer;
+  private static SQLAnalyzer sqlAnalyzer;
   private static LogicalPlanner planner;
+  private static LogicalOptimizer optimizer;
 
   @BeforeClass
   public static void setUp() throws Exception {
@@ -84,8 +86,9 @@ public class TestLogicalOptimizer {
         CatalogUtil.newDataTypesWithoutLen(Type.INT4));
 
     catalog.registerFunction(funcDesc);
-    analyzer = new QueryAnalyzer(catalog);
+    sqlAnalyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
+    optimizer = new LogicalOptimizer();
   }
 
   @AfterClass
@@ -103,137 +106,140 @@ public class TestLogicalOptimizer {
   };
   
   @Test
-  public final void testProjectionPushWithNaturalJoin() throws CloneNotSupportedException {
+  public final void testProjectionPushWithNaturalJoin() throws PlanningException, CloneNotSupportedException {
     // two relations
-    PlanningContext context = analyzer.parse(QUERIES[4]);
-    LogicalNode plan = planner.createPlan(context);
-    assertEquals(ExprType.ROOT, plan.getType());
+    Expr expr = sqlAnalyzer.parse(QUERIES[4]);
+    LogicalPlan newPlan = planner.createPlan(expr);
+    LogicalNode plan = newPlan.getRootBlock().getRoot();
+    assertEquals(NodeType.ROOT, plan.getType());
     LogicalRootNode root = (LogicalRootNode) plan;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.PROJECTION, root.getSubNode().getType());
-    ProjectionNode projNode = (ProjectionNode) root.getSubNode();    
-    assertEquals(ExprType.JOIN, projNode.getSubNode().getType());
-    JoinNode joinNode = (JoinNode) projNode.getSubNode();
-    assertEquals(ExprType.SCAN, joinNode.getOuterNode().getType());
-    assertEquals(ExprType.SCAN, joinNode.getInnerNode().getType());
+    assertEquals(NodeType.PROJECTION, root.getChild().getType());
+    ProjectionNode projNode = (ProjectionNode) root.getChild();
+    assertEquals(NodeType.JOIN, projNode.getChild().getType());
+    JoinNode joinNode = (JoinNode) projNode.getChild();
+    assertEquals(NodeType.SCAN, joinNode.getLeftChild().getType());
+    assertEquals(NodeType.SCAN, joinNode.getRightChild().getType());
     
-    LogicalNode optimized = LogicalOptimizer.optimize(context, plan);
-    assertEquals(ExprType.ROOT, optimized.getType());
+    LogicalNode optimized = optimizer.optimize(newPlan);
+
+    assertEquals(NodeType.ROOT, optimized.getType());
     root = (LogicalRootNode) optimized;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.JOIN, root.getSubNode().getType());
-    joinNode = (JoinNode) root.getSubNode();
-    assertEquals(ExprType.SCAN, joinNode.getOuterNode().getType());
-    assertEquals(ExprType.SCAN, joinNode.getInnerNode().getType());
+    assertEquals(NodeType.JOIN, root.getChild().getType());
+    joinNode = (JoinNode) root.getChild();
+    assertEquals(NodeType.SCAN, joinNode.getLeftChild().getType());
+    assertEquals(NodeType.SCAN, joinNode.getRightChild().getType());
   }
   
   @Test
-  public final void testProjectionPushWithInnerJoin() throws CloneNotSupportedException {
+  public final void testProjectionPushWithInnerJoin() throws PlanningException {
     // two relations
-    PlanningContext context = analyzer.parse(QUERIES[5]);
-    LogicalNode plan = planner.createPlan(context);
-    System.out.println(plan);
-    System.out.println("--------------");
-    LogicalNode optimized = LogicalOptimizer.optimize(context, plan);
-    System.out.println(optimized);
+    Expr expr = sqlAnalyzer.parse(QUERIES[5]);
+    LogicalPlan newPlan = planner.createPlan(expr);
+    optimizer.optimize(newPlan);
   }
   
   @Test
-  public final void testProjectionPush() throws CloneNotSupportedException {
+  public final void testProjectionPush() throws CloneNotSupportedException, PlanningException {
     // two relations
-    PlanningContext context = analyzer.parse(QUERIES[2]);
-    LogicalNode plan = planner.createPlan(context);
+    Expr expr = sqlAnalyzer.parse(QUERIES[2]);
+    LogicalPlan newPlan = planner.createPlan(expr);
+    LogicalNode plan = newPlan.getRootBlock().getRoot();
     
-    assertEquals(ExprType.ROOT, plan.getType());
+    assertEquals(NodeType.ROOT, plan.getType());
     LogicalRootNode root = (LogicalRootNode) plan;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.PROJECTION, root.getSubNode().getType());
-    ProjectionNode projNode = (ProjectionNode) root.getSubNode();
-    assertEquals(ExprType.SELECTION, projNode.getSubNode().getType());
-    SelectionNode selNode = (SelectionNode) projNode.getSubNode();    
-    assertEquals(ExprType.SCAN, selNode.getSubNode().getType());        
-    
-    LogicalNode optimized = LogicalOptimizer.optimize(context, plan);
-    assertEquals(ExprType.ROOT, optimized.getType());
+    assertEquals(NodeType.PROJECTION, root.getChild().getType());
+    ProjectionNode projNode = (ProjectionNode) root.getChild();
+    assertEquals(NodeType.SELECTION, projNode.getChild().getType());
+    SelectionNode selNode = (SelectionNode) projNode.getChild();
+    assertEquals(NodeType.SCAN, selNode.getChild().getType());
+
+    LogicalNode optimized = optimizer.optimize(newPlan);
+    assertEquals(NodeType.ROOT, optimized.getType());
     root = (LogicalRootNode) optimized;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.SCAN, root.getSubNode().getType());
+    assertEquals(NodeType.SCAN, root.getChild().getType());
   }
   
   @Test
-  public final void testOptimizeWithGroupBy() throws CloneNotSupportedException {
-    PlanningContext context = analyzer.parse(QUERIES[3]);
-    LogicalNode plan = planner.createPlan(context);
+  public final void testOptimizeWithGroupBy() throws CloneNotSupportedException, PlanningException {
+    Expr expr = sqlAnalyzer.parse(QUERIES[3]);
+    LogicalPlan newPlan = planner.createPlan(expr);
+    LogicalNode plan = newPlan.getRootBlock().getRoot();
         
-    assertEquals(ExprType.ROOT, plan.getType());
+    assertEquals(NodeType.ROOT, plan.getType());
     LogicalRootNode root = (LogicalRootNode) plan;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.PROJECTION, root.getSubNode().getType());
-    ProjectionNode projNode = (ProjectionNode) root.getSubNode();
-    assertEquals(ExprType.GROUP_BY, projNode.getSubNode().getType());
-    GroupbyNode groupbyNode = (GroupbyNode) projNode.getSubNode();
-    assertEquals(ExprType.SELECTION, groupbyNode.getSubNode().getType());
-    SelectionNode selNode = (SelectionNode) groupbyNode.getSubNode();
-    assertEquals(ExprType.SCAN, selNode.getSubNode().getType());
+    assertEquals(NodeType.PROJECTION, root.getChild().getType());
+    ProjectionNode projNode = (ProjectionNode) root.getChild();
+    assertEquals(NodeType.GROUP_BY, projNode.getChild().getType());
+    GroupbyNode groupbyNode = (GroupbyNode) projNode.getChild();
+    assertEquals(NodeType.SELECTION, groupbyNode.getChild().getType());
+    SelectionNode selNode = (SelectionNode) groupbyNode.getChild();
+    assertEquals(NodeType.SCAN, selNode.getChild().getType());
     
-    LogicalNode optimized = LogicalOptimizer.optimize(context, plan);
-    assertEquals(ExprType.ROOT, optimized.getType());
+    LogicalNode optimized = optimizer.optimize(newPlan);
+    assertEquals(NodeType.ROOT, optimized.getType());
     root = (LogicalRootNode) optimized;
     TestLogicalNode.testCloneLogicalNode(root);
-    assertEquals(ExprType.GROUP_BY, root.getSubNode().getType());
-    groupbyNode = (GroupbyNode) root.getSubNode();    
-    assertEquals(ExprType.SCAN, groupbyNode.getSubNode().getType());
+    assertEquals(NodeType.GROUP_BY, root.getChild().getType());
+    groupbyNode = (GroupbyNode) root.getChild();
+    assertEquals(NodeType.SCAN, groupbyNode.getChild().getType());
   }
 
   @Test
-  public final void testPushable() throws CloneNotSupportedException {
+  public final void testPushable() throws CloneNotSupportedException, PlanningException {
     // two relations
-    PlanningContext context = analyzer.parse(QUERIES[0]);
-    LogicalNode plan = planner.createPlan(context);
+    Expr expr = sqlAnalyzer.parse(QUERIES[0]);
+    LogicalPlan newPlan = planner.createPlan(expr);
+    LogicalNode plan = newPlan.getRootBlock().getRoot();
     
-    assertEquals(ExprType.ROOT, plan.getType());
+    assertEquals(NodeType.ROOT, plan.getType());
     LogicalRootNode root = (LogicalRootNode) plan;
     TestLogicalNode.testCloneLogicalNode(root);
 
-    assertEquals(ExprType.PROJECTION, root.getSubNode().getType());
-    ProjectionNode projNode = (ProjectionNode) root.getSubNode();
+    assertEquals(NodeType.PROJECTION, root.getChild().getType());
+    ProjectionNode projNode = (ProjectionNode) root.getChild();
 
-    assertEquals(ExprType.SELECTION, projNode.getSubNode().getType());
-    SelectionNode selNode = (SelectionNode) projNode.getSubNode();
+    assertEquals(NodeType.SELECTION, projNode.getChild().getType());
+    SelectionNode selNode = (SelectionNode) projNode.getChild();
     
-    assertEquals(ExprType.JOIN, selNode.getSubNode().getType());
-    JoinNode joinNode = (JoinNode) selNode.getSubNode();
+    assertEquals(NodeType.JOIN, selNode.getChild().getType());
+    JoinNode joinNode = (JoinNode) selNode.getChild();
     assertFalse(joinNode.hasJoinQual());
     
     // Test for Pushable
-    assertTrue(LogicalOptimizer.canBeEvaluated(selNode.getQual(), joinNode));
+    assertTrue(PlannerUtil.canBeEvaluated(selNode.getQual(), joinNode));
     
     // Optimized plan
-    LogicalNode optimized = LogicalOptimizer.optimize(context, plan);
-    assertEquals(ExprType.ROOT, optimized.getType());
+    LogicalNode optimized = optimizer.optimize(newPlan);
+    assertEquals(NodeType.ROOT, optimized.getType());
     root = (LogicalRootNode) optimized;
     
-    assertEquals(ExprType.JOIN, root.getSubNode().getType());
-    joinNode = (JoinNode) root.getSubNode();
+    assertEquals(NodeType.JOIN, root.getChild().getType());
+    joinNode = (JoinNode) root.getChild();
     assertTrue(joinNode.hasJoinQual());
     
     // Scan Pushable Test
-    context = analyzer.parse(QUERIES[1]);
-    plan = planner.createPlan(context);
+    expr = sqlAnalyzer.parse(QUERIES[1]);
+    newPlan = planner.createPlan(expr);
+    plan = newPlan.getRootBlock().getRoot();
     
-    assertEquals(ExprType.ROOT, plan.getType());
+    assertEquals(NodeType.ROOT, plan.getType());
     root = (LogicalRootNode) plan;
     TestLogicalNode.testCloneLogicalNode(root);
 
-    assertEquals(ExprType.PROJECTION, root.getSubNode().getType());
-    projNode = (ProjectionNode) root.getSubNode();
+    assertEquals(NodeType.PROJECTION, root.getChild().getType());
+    projNode = (ProjectionNode) root.getChild();
 
-    assertEquals(ExprType.SELECTION, projNode.getSubNode().getType());
-    selNode = (SelectionNode) projNode.getSubNode();
+    assertEquals(NodeType.SELECTION, projNode.getChild().getType());
+    selNode = (SelectionNode) projNode.getChild();
     
-    assertEquals(ExprType.SCAN, selNode.getSubNode().getType());
-    ScanNode scanNode = (ScanNode) selNode.getSubNode();
+    assertEquals(NodeType.SCAN, selNode.getChild().getType());
+    ScanNode scanNode = (ScanNode) selNode.getChild();
     // Test for Join Node
-    assertTrue(LogicalOptimizer.canBeEvaluated(selNode.getQual(), scanNode));
+    assertTrue(PlannerUtil.canBeEvaluated(selNode.getQual(), scanNode));
   }
 }

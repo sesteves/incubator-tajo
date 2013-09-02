@@ -1,0 +1,137 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// TajoMaster -> TajoWorker, TajoWorker(QueryMaster) <-> TajoWorker Protocol
+option java_package = "org.apache.tajo.ipc";
+option java_outer_classname = "TajoWorkerProtocol";
+option java_generic_services = true;
+option java_generate_equals_and_hash = true;
+
+import "yarn_protos.proto";
+import "tajo_protos.proto";
+import "TajoIdProtos.proto";
+import "CatalogProtos.proto";
+import "PrimitiveProtos.proto";
+
+message TaskStatusProto {
+  required QueryUnitAttemptIdProto id = 1;
+  required string workerName = 2;
+  required float progress = 3;
+  required TaskAttemptState state = 4;
+  optional StatSetProto stats = 5;
+  optional TableStatProto resultStats = 6;
+  repeated Partition partitions = 7;
+}
+
+message TaskCompletionReport {
+  required QueryUnitAttemptIdProto id = 1;
+  optional StatSetProto stats = 2;
+  optional TableStatProto resultStats = 3;
+  repeated Partition partitions = 4;
+}
+
+message TaskFatalErrorReport {
+  required QueryUnitAttemptIdProto id = 1;
+  optional string error_message = 2;
+}
+
+message QueryUnitRequestProto {
+    required QueryUnitAttemptIdProto id = 1;
+    repeated FragmentProto fragments = 2;
+    required string outputTable = 3;
+    required bool clusteredOutput = 4;
+    required string serializedData = 5;
+    optional bool interQuery = 6 [default = false];
+    repeated Fetch fetches = 7;
+    optional bool shouldDie = 8;
+}
+
+message Fetch {
+    required string name = 1;
+    required string urls = 2;
+}
+
+message QueryUnitResponseProto {
+    required string id = 1;
+    required QueryState status = 2;
+}
+
+message StatusReportProto {
+  required int64 timestamp = 1;
+  required string serverName = 2;
+  repeated TaskStatusProto status = 3;
+  repeated QueryUnitAttemptIdProto pings = 4;
+}
+
+message CommandRequestProto {
+    repeated Command command = 1;
+}
+
+message CommandResponseProto {
+}
+
+message Command {
+    required QueryUnitAttemptIdProto id = 1;
+    required CommandType type = 2;
+}
+
+enum CommandType {
+    PREPARE = 0;
+    LAUNCH = 1;
+    STOP = 2;
+    FINALIZE = 3;
+}
+
+message Partition {
+    required int32 partitionKey = 1;
+    optional string fileName = 2;
+}
+
+message QueryExecutionRequestProto {
+    required QueryIdProto queryId = 1;
+    required StringProto logicalPlanJson = 2;
+}
+
+message GetTaskRequestProto {
+    required ContainerIdProto containerId = 1;
+    required ExecutionBlockIdProto executionBlockId = 2;
+}
+
+message RunExecutionBlockRequestProto {
+    required string executionBlockId = 1;
+    required string queryMasterHost = 2;
+    required int32 queryMasterPort = 3;
+    required string nodeId = 4;
+    required string containerId = 5;
+    optional string queryOutputPath = 6;
+}
+
+service TajoWorkerProtocolService {
+  //from Worker
+  rpc getTask(GetTaskRequestProto) returns (QueryUnitRequestProto);
+  rpc statusUpdate (TaskStatusProto) returns (BoolProto);
+  rpc ping (QueryUnitAttemptIdProto) returns (BoolProto);
+  rpc fatalError(TaskFatalErrorReport) returns (BoolProto);
+  rpc done (TaskCompletionReport) returns (BoolProto);
+
+  //from TajoMaster's QueryJobManager
+  rpc executeQuery(QueryExecutionRequestProto) returns (BoolProto);
+
+  //from QueryMaster(Worker)
+  rpc executeExecutionBlock(RunExecutionBlockRequestProto) returns (BoolProto);
+}

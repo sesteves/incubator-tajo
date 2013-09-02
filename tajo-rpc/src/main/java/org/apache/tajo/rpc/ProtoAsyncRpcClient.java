@@ -22,10 +22,10 @@ import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.*;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.jboss.netty.channel.*;
 import org.apache.tajo.rpc.RpcProtos.RpcRequest;
 import org.apache.tajo.rpc.RpcProtos.RpcResponse;
 import org.apache.tajo.util.NetUtils;
+import org.jboss.netty.channel.*;
 
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
@@ -165,7 +165,7 @@ public class ProtoAsyncRpcClient extends NettyClientBase {
 
   private String getErrorMessage(String message) {
     return "Exception [" + protocol.getCanonicalName() +
-        "(" + NetUtils.getIpPortString((InetSocketAddress)
+        "(" + NetUtils.normalizeInetSocketAddress((InetSocketAddress)
         getChannel().getRemoteAddress()) + ")]: " + message;
   }
 
@@ -198,8 +198,9 @@ public class ProtoAsyncRpcClient extends NettyClientBase {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e)
         throws Exception {
+      LOG.error(addr + "," + protocol + "," + e.getCause().getMessage(), e.getCause());
       e.getChannel().close();
-      throw new RemoteException(getErrorMessage(""), e.getCause());
+      throw new RemoteException(getErrorMessage(addr.toString()), e.getCause());
     }
   }
 }

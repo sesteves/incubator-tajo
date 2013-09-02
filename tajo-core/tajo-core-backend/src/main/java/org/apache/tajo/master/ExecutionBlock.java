@@ -15,7 +15,7 @@
 package org.apache.tajo.master;
 
 import com.google.common.base.Preconditions;
-import org.apache.tajo.SubQueryId;
+import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.engine.planner.logical.*;
 
@@ -40,7 +40,7 @@ public class ExecutionBlock {
     RANGE
   }
 
-  private SubQueryId subQueryId;
+  private ExecutionBlockId executionBlockId;
   private LogicalNode plan = null;
   private StoreTableNode store = null;
   private List<ScanNode> scanlist = new ArrayList<ScanNode>();
@@ -50,12 +50,12 @@ public class ExecutionBlock {
   private boolean hasJoinPlan;
   private boolean hasUnionPlan;
 
-  public ExecutionBlock(SubQueryId subQueryId) {
-    this.subQueryId = subQueryId;
+  public ExecutionBlock(ExecutionBlockId executionBlockId) {
+    this.executionBlockId = executionBlockId;
   }
 
-  public SubQueryId getId() {
-    return subQueryId;
+  public ExecutionBlockId getId() {
+    return executionBlockId;
   }
 
   public String getOutputName() {
@@ -72,15 +72,10 @@ public class ExecutionBlock {
 
   public void setPlan(LogicalNode plan) {
     hasJoinPlan = false;
-    Preconditions.checkArgument(plan.getType() == ExprType.STORE
-        || plan.getType() == ExprType.CREATE_INDEX);
+    Preconditions.checkArgument(plan.getType() == NodeType.STORE);
 
     this.plan = plan;
-    if (plan instanceof StoreTableNode) {
-      store = (StoreTableNode) plan;
-    } else {
-      store = (StoreTableNode) ((IndexWriteNode)plan).getSubNode();
-    }
+    store = (StoreTableNode) plan;
 
     LogicalNode node = plan;
     ArrayList<LogicalNode> s = new ArrayList<LogicalNode>();
@@ -89,16 +84,16 @@ public class ExecutionBlock {
       node = s.remove(s.size()-1);
       if (node instanceof UnaryNode) {
         UnaryNode unary = (UnaryNode) node;
-        s.add(s.size(), unary.getSubNode());
+        s.add(s.size(), unary.getChild());
       } else if (node instanceof BinaryNode) {
         BinaryNode binary = (BinaryNode) node;
-        if (binary.getType() == ExprType.JOIN) {
+        if (binary.getType() == NodeType.JOIN) {
           hasJoinPlan = true;
-        } else if (binary.getType() == ExprType.UNION) {
+        } else if (binary.getType() == NodeType.UNION) {
           hasUnionPlan = true;
         }
-        s.add(s.size(), binary.getOuterNode());
-        s.add(s.size(), binary.getInnerNode());
+        s.add(s.size(), binary.getLeftChild());
+        s.add(s.size(), binary.getRightChild());
       } else if (node instanceof ScanNode) {
         scanlist.add((ScanNode)node);
       }

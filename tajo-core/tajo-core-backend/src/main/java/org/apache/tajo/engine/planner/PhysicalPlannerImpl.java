@@ -72,7 +72,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
       case ROOT:
         LogicalRootNode rootNode = (LogicalRootNode) logicalNode;
-        return createPlanRecursive(ctx, rootNode.getSubNode());
+        return createPlanRecursive(ctx, rootNode.getChild());
 
       case EXPRS:
         EvalExprNode evalExpr = (EvalExprNode) logicalNode;
@@ -80,17 +80,17 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
       case STORE:
         StoreTableNode storeNode = (StoreTableNode) logicalNode;
-        outer = createPlanRecursive(ctx, storeNode.getSubNode());
+        outer = createPlanRecursive(ctx, storeNode.getChild());
         return createStorePlan(ctx, storeNode, outer);
 
       case SELECTION:
         SelectionNode selNode = (SelectionNode) logicalNode;
-        outer = createPlanRecursive(ctx, selNode.getSubNode());
+        outer = createPlanRecursive(ctx, selNode.getChild());
         return new SelectionExec(ctx, selNode, outer);
 
       case PROJECTION:
         ProjectionNode prjNode = (ProjectionNode) logicalNode;
-        outer = createPlanRecursive(ctx, prjNode.getSubNode());
+        outer = createPlanRecursive(ctx, prjNode.getChild());
         return new ProjectionExec(ctx, prjNode, outer);
 
       case SCAN:
@@ -99,50 +99,37 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
       case GROUP_BY:
         GroupbyNode grpNode = (GroupbyNode) logicalNode;
-        outer = createPlanRecursive(ctx, grpNode.getSubNode());
+        outer = createPlanRecursive(ctx, grpNode.getChild());
         return createGroupByPlan(ctx, grpNode, outer);
 
       case SORT:
         SortNode sortNode = (SortNode) logicalNode;
-        outer = createPlanRecursive(ctx, sortNode.getSubNode());
+        outer = createPlanRecursive(ctx, sortNode.getChild());
         return createSortPlan(ctx, sortNode, outer);
 
       case JOIN:
         JoinNode joinNode = (JoinNode) logicalNode;
-        outer = createPlanRecursive(ctx, joinNode.getOuterNode());
-        inner = createPlanRecursive(ctx, joinNode.getInnerNode());
+        outer = createPlanRecursive(ctx, joinNode.getLeftChild());
+        inner = createPlanRecursive(ctx, joinNode.getRightChild());
         return createJoinPlan(ctx, joinNode, outer, inner);
 
       case UNION:
         UnionNode unionNode = (UnionNode) logicalNode;
-        outer = createPlanRecursive(ctx, unionNode.getOuterNode());
-        inner = createPlanRecursive(ctx, unionNode.getInnerNode());
+        outer = createPlanRecursive(ctx, unionNode.getLeftChild());
+        inner = createPlanRecursive(ctx, unionNode.getRightChild());
         return new UnionExec(ctx, outer, inner);
 
       case LIMIT:
         LimitNode limitNode = (LimitNode) logicalNode;
-        outer = createPlanRecursive(ctx, limitNode.getSubNode());
+        outer = createPlanRecursive(ctx, limitNode.getChild());
         return new LimitExec(ctx, limitNode.getInSchema(),
             limitNode.getOutSchema(), outer, limitNode);
-
-      case CREATE_INDEX:
-        IndexWriteNode createIndexNode = (IndexWriteNode) logicalNode;
-        outer = createPlanRecursive(ctx, createIndexNode.getSubNode());
-        return createIndexWritePlan(sm, ctx, createIndexNode, outer);
 
       case BST_INDEX_SCAN:
         IndexScanNode indexScanNode = (IndexScanNode) logicalNode;
         outer = createIndexScanExec(ctx, indexScanNode);
         return outer;
 
-      case RENAME:
-      case SET_UNION:
-      case SET_DIFF:
-      case SET_INTERSECT:
-      case INSERT_INTO:
-      case SHOW_TABLE:
-      case DESC_TABLE:
-      case SHOW_FUNCTION:
       default:
         return null;
     }
@@ -168,8 +155,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         return new NLJoinExec(ctx, joinNode, outer, inner);
 
       case INNER:
-        String [] outerLineage = PlannerUtil.getLineage(joinNode.getOuterNode());
-        String [] innerLineage = PlannerUtil.getLineage(joinNode.getInnerNode());
+        String [] outerLineage = PlannerUtil.getLineage(joinNode.getLeftChild());
+        String [] innerLineage = PlannerUtil.getLineage(joinNode.getRightChild());
         long outerSize = estimateSizeRecursive(ctx, outerLineage);
         long innerSize = estimateSizeRecursive(ctx, innerLineage);
 
@@ -259,7 +246,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       LOG.info("The planner chooses HashAggregationExec");
       return new HashAggregateExec(ctx, groupbyNode, subOp);
     } else {
-      String [] outerLineage = PlannerUtil.getLineage(groupbyNode.getSubNode());
+      String [] outerLineage = PlannerUtil.getLineage(groupbyNode.getChild());
       long estimatedSize = estimateSizeRecursive(ctx, outerLineage);
       final long threshold = 1048576 * 256;
 
@@ -288,14 +275,6 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
   public PhysicalExec createSortPlan(TaskAttemptContext ctx, SortNode sortNode,
                                      PhysicalExec subOp) throws IOException {
     return new ExternalSortExec(ctx, sm, sortNode, subOp);
-  }
-
-  public PhysicalExec createIndexWritePlan(StorageManager sm,
-                                           TaskAttemptContext ctx, IndexWriteNode indexWriteNode, PhysicalExec subOp)
-      throws IOException {
-
-    return new IndexWriteExec(ctx, sm, indexWriteNode, ctx.getTable(indexWriteNode
-        .getTableName()), subOp);
   }
 
   public PhysicalExec createIndexScanExec(TaskAttemptContext ctx,

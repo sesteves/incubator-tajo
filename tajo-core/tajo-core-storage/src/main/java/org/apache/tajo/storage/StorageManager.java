@@ -20,34 +20,38 @@ package org.apache.tajo.storage;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.commons.net.util.Base64;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
+import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.tajo.TajoConstants;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.TableMetaImpl;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableProto;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
+import org.apache.tajo.util.Bytes;
 import org.apache.tajo.util.FileUtil;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * StorageManager
- *
  */
 public class StorageManager {
-	private final Log LOG = LogFactory.getLog(StorageManager.class);
+  private final Log LOG = LogFactory.getLog(StorageManager.class);
 
-	private final TajoConf conf;
-	private final FileSystem fs;
-	private final Path baseDir;
+  private final TajoConf conf;
+  private final FileSystem fs;
+  private final Path baseDir;
+  private final Path tableBaseDir;
+  private final boolean blocksMetadataEnabled;
 
   /**
    * Cache of scanner handlers for each storage type.
@@ -69,50 +73,59 @@ public class StorageManager {
       new ConcurrentHashMap<Class<?>, Constructor<?>>();
 
 
-	public StorageManager(TajoConf conf) throws IOException {
-		this.conf = conf;
+  public StorageManager(TajoConf conf) throws IOException {
+    this.conf = conf;
     this.baseDir = new Path(conf.getVar(ConfVars.ROOT_DIR));
+    this.tableBaseDir = new Path(this.baseDir, TajoConstants.WAREHOUSE_DIR);
     this.fs = baseDir.getFileSystem(conf);
-	}
-	
-	public static StorageManager get(TajoConf conf) throws IOException {
-	  return new StorageManager(conf);
-	}
-	
-	public static StorageManager get(TajoConf conf, String dataRoot)
-	    throws IOException {
-	  conf.setVar(ConfVars.ROOT_DIR, dataRoot);
+    this.blocksMetadataEnabled = conf.getBoolean(DFSConfigKeys.DFS_HDFS_BLOCKS_METADATA_ENABLED,
+        DFSConfigKeys.DFS_HDFS_BLOCKS_METADATA_ENABLED_DEFAULT);
+    if (!this.blocksMetadataEnabled)
+      LOG.warn("does not support block metadata. ('dfs.datanode.hdfs-blocks-metadata.enabled')");
+  }
+
+  public static StorageManager get(TajoConf conf) throws IOException {
     return new StorageManager(conf);
-	}
-	
-	public static StorageManager get(TajoConf conf, Path dataRoot)
+  }
+
+  public static StorageManager get(TajoConf conf, String dataRoot)
+      throws IOException {
+    conf.setVar(ConfVars.ROOT_DIR, dataRoot);
+    return new StorageManager(conf);
+  }
+
+  public static StorageManager get(TajoConf conf, Path dataRoot)
       throws IOException {
     conf.setVar(ConfVars.ROOT_DIR, dataRoot.toString());
     return new StorageManager(conf);
   }
-	
-	public FileSystem getFileSystem() {
-	  return this.fs;
-	}
-	
-	public Path getBaseDir() {
-	  return this.baseDir;
-	}
-	
+
+  public FileSystem getFileSystem() {
+    return this.fs;
+  }
+
+  public Path getBaseDir() {
+    return this.baseDir;
+  }
+
+  public Path getTableBaseDir() {
+    return this.tableBaseDir;
+  }
+
   public void delete(Path tablePath) throws IOException {
     FileSystem fs = tablePath.getFileSystem(conf);
     fs.delete(tablePath, true);
   }
-  
+
   public Path getTablePath(String tableName) {
-    return new Path(baseDir, tableName);
+    return new Path(tableBaseDir, tableName);
   }
 
   public static Scanner getScanner(Configuration conf, TableMeta meta, Path path)
       throws IOException {
     FileSystem fs = path.getFileSystem(conf);
     FileStatus status = fs.getFileStatus(path);
-    Fragment fragment = new Fragment(path.getName(), path, meta, 0, status.getLen(), null);
+    Fragment fragment = new Fragment(path.getName(), path, meta, 0, status.getLen());
     return getScanner(conf, meta, fragment);
   }
 
@@ -131,10 +144,10 @@ public class StorageManager {
     String handlerName = meta.getStoreType().name().toLowerCase();
     scannerClass = SCANNER_HANDLER_CACHE.get(handlerName);
     if (scannerClass == null) {
-        scannerClass = conf.getClass(
-        String.format("tajo.storage.scanner-handler.%s.class",
-            meta.getStoreType().name().toLowerCase()), null,
-        FileScanner.class);
+      scannerClass = conf.getClass(
+          String.format("tajo.storage.scanner-handler.%s.class",
+              meta.getStoreType().name().toLowerCase()), null,
+          FileScanner.class);
       SCANNER_HANDLER_CACHE.put(handlerName, scannerClass);
     }
 
@@ -181,8 +194,8 @@ public class StorageManager {
 
     FileSystem fs = tablePath.getFileSystem(conf);
     Path tableMetaPath = new Path(tablePath, ".meta");
-    if(!fs.exists(tableMetaPath)) {
-      throw new FileNotFoundException(".meta file not found in "+tablePath.toString());
+    if (!fs.exists(tableMetaPath)) {
+      throw new FileNotFoundException(".meta file not found in " + tablePath.toString());
     }
 
     FSDataInputStream tableMetaIn = fs.open(tableMetaPath);
@@ -195,16 +208,16 @@ public class StorageManager {
   }
 
   public Fragment[] split(String tableName) throws IOException {
-    Path tablePath = new Path(baseDir, tableName);
+    Path tablePath = new Path(tableBaseDir, tableName);
     return split(tableName, tablePath, fs.getDefaultBlockSize());
   }
 
   public Fragment[] split(String tableName, long fragmentSize) throws IOException {
-    Path tablePath = new Path(baseDir, tableName);
+    Path tablePath = new Path(tableBaseDir, tableName);
     return split(tableName, tablePath, fragmentSize);
   }
 
-  public Fragment [] splitBroadcastTable(Path tablePath) throws IOException {
+  public Fragment[] splitBroadcastTable(Path tablePath) throws IOException {
     FileSystem fs = tablePath.getFileSystem(conf);
     TableMeta meta = getTableMeta(tablePath);
     List<Fragment> listTablets = new ArrayList<Fragment>();
@@ -212,8 +225,7 @@ public class StorageManager {
 
     FileStatus[] fileLists = fs.listStatus(new Path(tablePath, "data"));
     for (FileStatus file : fileLists) {
-      tablet = new Fragment(tablePath.getName(), file.getPath(), meta, 0,
-          file.getLen(), null);
+      tablet = new Fragment(tablePath.getName(), file.getPath(), meta, 0, file.getLen());
       listTablets.add(tablet);
     }
 
@@ -247,17 +259,14 @@ public class StorageManager {
       long start = 0;
       if (remainFileSize > defaultBlockSize) {
         while (remainFileSize > defaultBlockSize) {
-          tablet = new Fragment(tableName, file.getPath(), meta, start,
-              defaultBlockSize, null);
+          tablet = new Fragment(tableName, file.getPath(), meta, start, defaultBlockSize);
           listTablets.add(tablet);
           start += defaultBlockSize;
           remainFileSize -= defaultBlockSize;
         }
-        listTablets.add(new Fragment(tableName, file.getPath(), meta, start,
-            remainFileSize, null));
+        listTablets.add(new Fragment(tableName, file.getPath(), meta, start, remainFileSize));
       } else {
-        listTablets.add(new Fragment(tableName, file.getPath(), meta, 0,
-            remainFileSize, null));
+        listTablets.add(new Fragment(tableName, file.getPath(), meta, 0, remainFileSize));
       }
     }
 
@@ -282,17 +291,14 @@ public class StorageManager {
       long start = 0;
       if (remainFileSize > defaultBlockSize) {
         while (remainFileSize > defaultBlockSize) {
-          tablet = new Fragment(tableName, file.getPath(), meta, start,
-              defaultBlockSize, null);
+          tablet = new Fragment(tableName, file.getPath(), meta, start, defaultBlockSize);
           listTablets.add(tablet);
           start += defaultBlockSize;
           remainFileSize -= defaultBlockSize;
         }
-        listTablets.add(new Fragment(tableName, file.getPath(), meta, start,
-            remainFileSize, null));
+        listTablets.add(new Fragment(tableName, file.getPath(), meta, start, remainFileSize));
       } else {
-        listTablets.add(new Fragment(tableName, file.getPath(), meta, 0,
-            remainFileSize, null));
+        listTablets.add(new Fragment(tableName, file.getPath(), meta, 0, remainFileSize));
       }
     }
 
@@ -336,7 +342,7 @@ public class StorageManager {
   /////////////////////////////////////////////////////////////////////////////
 
   private static final PathFilter hiddenFileFilter = new PathFilter() {
-    public boolean accept(Path p){
+    public boolean accept(Path p) {
       String name = p.getName();
       return !name.startsWith("_") && !name.startsWith(".");
     }
@@ -374,7 +380,7 @@ public class StorageManager {
    */
   protected List<FileStatus> listStatus(Path path) throws IOException {
     List<FileStatus> result = new ArrayList<FileStatus>();
-    Path[] dirs = new Path[] {path};
+    Path[] dirs = new Path[]{path};
     if (dirs.length == 0) {
       throw new IOException("No input paths specified in job");
     }
@@ -388,7 +394,7 @@ public class StorageManager {
 
     PathFilter inputFilter = new MultiPathFilter(filters);
 
-    for (int i=0; i < dirs.length; ++i) {
+    for (int i = 0; i < dirs.length; ++i) {
       Path p = dirs[i];
 
       FileSystem fs = p.getFileSystem(conf);
@@ -398,9 +404,9 @@ public class StorageManager {
       } else if (matches.length == 0) {
         errors.add(new IOException("Input Pattern " + p + " matches 0 files"));
       } else {
-        for (FileStatus globStat: matches) {
+        for (FileStatus globStat : matches) {
           if (globStat.isDirectory()) {
-            for(FileStatus stat: fs.listStatus(globStat.getPath(),
+            for (FileStatus stat : fs.listStatus(globStat.getPath(),
                 inputFilter)) {
               result.add(stat);
             }
@@ -420,6 +426,7 @@ public class StorageManager {
 
   /**
    * Get the lower bound on split size imposed by the format.
+   *
    * @return the number of bytes of the minimal split for this format
    */
   protected long getFormatMinSplitSize() {
@@ -429,36 +436,40 @@ public class StorageManager {
   /**
    * Is the given filename splitable? Usually, true, but if the file is
    * stream compressed, it will not be.
-   *
+   * <p/>
    * <code>FileInputFormat</code> implementations can override this and return
    * <code>false</code> to ensure that individual input files are never split-up
    * so that Mappers process entire files.
    *
    * @param filename the file name to check
-   * @return is this file splitable?
+   * @return is this file isSplittable?
    */
-  protected boolean isSplitable(Path filename) {
-    return true;
+  protected boolean isSplittable(TableMeta meta, Path filename) throws IOException {
+    Scanner scanner = getScanner(conf, meta, filename);
+    return scanner.isSplittable();
   }
 
+  @Deprecated
   protected long computeSplitSize(long blockSize, long minSize,
                                   long maxSize) {
     return Math.max(minSize, Math.min(maxSize, blockSize));
   }
 
+  @Deprecated
   private static final double SPLIT_SLOP = 1.1;   // 10% slop
 
+  @Deprecated
   protected int getBlockIndex(BlockLocation[] blkLocations,
                               long offset) {
-    for (int i = 0 ; i < blkLocations.length; i++) {
+    for (int i = 0; i < blkLocations.length; i++) {
       // is the offset inside this block?
       if ((blkLocations[i].getOffset() <= offset) &&
-          (offset < blkLocations[i].getOffset() + blkLocations[i].getLength())){
+          (offset < blkLocations[i].getOffset() + blkLocations[i].getLength())) {
         return i;
       }
     }
-    BlockLocation last = blkLocations[blkLocations.length -1];
-    long fileLength = last.getOffset() + last.getLength() -1;
+    BlockLocation last = blkLocations[blkLocations.length - 1];
+    long fileLength = last.getOffset() + last.getLength() - 1;
     throw new IllegalArgumentException("Offset " + offset +
         " is outside of file (0.." +
         fileLength + ")");
@@ -468,15 +479,56 @@ public class StorageManager {
    * A factory that makes the split for this class. It can be overridden
    * by sub-classes to make sub-types
    */
-  protected Fragment makeSplit(String fragmentId, TableMeta meta, Path file, long start, long length,
-                               String[] hosts) {
-    return new Fragment(fragmentId, file, meta, start, length, hosts);
+  protected Fragment makeSplit(String fragmentId, TableMeta meta, Path file, long start, long length) {
+    return new Fragment(fragmentId, file, meta, start, length);
+  }
+
+  protected Fragment makeSplit(String fragmentId, TableMeta meta, Path file, BlockLocation blockLocation,
+                               int[] diskIds) throws IOException {
+    return new Fragment(fragmentId, file, meta, blockLocation, diskIds);
+  }
+
+  // for Non Splittable. eg, compressed gzip TextFile
+  protected Fragment makeNonSplit(String fragmentId, TableMeta meta, Path file, long start, long length,
+                                  BlockLocation[] blkLocations) throws IOException {
+
+    Map<String, Integer> hostsBlockMap = new HashMap<String, Integer>();
+    for (BlockLocation blockLocation : blkLocations) {
+      for (String host : blockLocation.getHosts()) {
+        if (hostsBlockMap.containsKey(host)) {
+          hostsBlockMap.put(host, hostsBlockMap.get(host) + 1);
+        } else {
+          hostsBlockMap.put(host, 1);
+        }
+      }
+    }
+
+    List<Map.Entry<String, Integer>> entries = new ArrayList<Map.Entry<String, Integer>>(hostsBlockMap.entrySet());
+    Collections.sort(entries, new Comparator<Map.Entry<String, Integer>>() {
+
+      @Override
+      public int compare(Map.Entry<String, Integer> v1, Map.Entry<String, Integer> v2) {
+        return v1.getValue().compareTo(v2.getValue());
+      }
+    });
+
+    String[] hosts = new String[blkLocations[0].getHosts().length];
+    int[] hostsBlockCount = new int[blkLocations[0].getHosts().length];
+
+    for (int i = 0; i < hosts.length; i++) {
+      Map.Entry<String, Integer> entry = entries.get((entries.size() - 1) - i);
+      hosts[i] = entry.getKey();
+      hostsBlockCount[i] = entry.getValue();
+    }
+    return new Fragment(fragmentId, file, meta, start, length, hosts, hostsBlockCount);
   }
 
   /**
    * Get the maximum split size.
+   *
    * @return the maximum number of bytes a split can include
    */
+  @Deprecated
   public static long getMaxSplitSize() {
     // TODO - to be configurable
     return 536870912L;
@@ -484,57 +536,106 @@ public class StorageManager {
 
   /**
    * Get the minimum split size
+   *
    * @return the minimum number of bytes that can be in a split
    */
+  @Deprecated
   public static long getMinSplitSize() {
     // TODO - to be configurable
     return 67108864L;
   }
 
   /**
+   * Get Disk Ids by Volume Bytes
+   */
+  private int[] getDiskIds(VolumeId[] volumeIds) {
+    int[] diskIds = new int[volumeIds.length];
+    for (int i = 0; i < volumeIds.length; i++) {
+      int diskId = -1;
+      if (volumeIds[i] != null && volumeIds[i].isValid()) {
+        String volumeIdString = volumeIds[i].toString();
+        byte[] volumeIdBytes = Base64.decodeBase64(volumeIdString);
+
+        if (volumeIdBytes.length == 4) {
+          diskId = Bytes.toInt(volumeIdBytes);
+        } else if (volumeIdBytes.length == 1) {
+          diskId = (int) volumeIdBytes[0];  // support hadoop-2.0.2
+        }
+      }
+      diskIds[i] = diskId;
+    }
+    return diskIds;
+  }
+
+  /**
+   * Generate the map of host and make them into Volume Ids.
+   *
+   */
+  private Map<String, Set<Integer>> getVolumeMap(List<Fragment> frags) {
+    Map<String, Set<Integer>> volumeMap = new HashMap<String, Set<Integer>>();
+    for (Fragment frag : frags) {
+      String[] hosts = frag.getHosts();
+      int[] diskIds = frag.getDiskIds();
+      for (int i = 0; i < hosts.length; i++) {
+        Set<Integer> volumeList = volumeMap.get(hosts[i]);
+        if (volumeList == null) {
+          volumeList = new HashSet<Integer>();
+          volumeMap.put(hosts[i], volumeList);
+        }
+
+        if (diskIds.length > 0 && diskIds[i] > -1) {
+          volumeList.add(diskIds[i]);
+        }
+      }
+    }
+
+    return volumeMap;
+  }
+  /**
    * Generate the list of files and make them into FileSplits.
+   *
    * @throws IOException
    */
   public List<Fragment> getSplits(String tableName, TableMeta meta, Path inputPath) throws IOException {
-    long minSize = Math.max(getFormatMinSplitSize(), getMinSplitSize());
-    long maxSize = getMaxSplitSize();
+    // generate splits'
 
-    // generate splits
     List<Fragment> splits = new ArrayList<Fragment>();
     List<FileStatus> files = listStatus(inputPath);
-    for (FileStatus file: files) {
+    FileSystem fs = inputPath.getFileSystem(conf);
+    for (FileStatus file : files) {
       Path path = file.getPath();
       long length = file.getLen();
-      if (length != 0) {
-        FileSystem fs = path.getFileSystem(conf);
+      if (length > 0) {
         BlockLocation[] blkLocations = fs.getFileBlockLocations(file, 0, length);
-        if (isSplitable(path)) {
-          long blockSize = file.getBlockSize();
-          long splitSize = computeSplitSize(blockSize, minSize, maxSize);
-
-          long bytesRemaining = length;
-          while (((double) bytesRemaining)/splitSize > SPLIT_SLOP) {
-            int blkIndex = getBlockIndex(blkLocations, length-bytesRemaining);
-            splits.add(makeSplit(tableName, meta, path, length-bytesRemaining, splitSize,
-                blkLocations[blkIndex].getHosts()));
-            bytesRemaining -= splitSize;
+        boolean splittable = isSplittable(meta, path);
+        if (blocksMetadataEnabled && fs instanceof DistributedFileSystem) {
+          // supported disk volume
+          BlockStorageLocation[] blockStorageLocations = ((DistributedFileSystem) fs)
+              .getFileBlockStorageLocations(Arrays.asList(blkLocations));
+          if (splittable) {
+            for (BlockStorageLocation blockStorageLocation : blockStorageLocations) {
+              splits.add(makeSplit(tableName, meta, path, blockStorageLocation, getDiskIds(blockStorageLocation
+                  .getVolumeIds())));
+            }
+          } else { // Non splittable
+            splits.add(makeNonSplit(tableName, meta, path, 0, length, blockStorageLocations));
           }
 
-          if (bytesRemaining != 0) {
-            int blkIndex = getBlockIndex(blkLocations, length-bytesRemaining);
-            splits.add(makeSplit(tableName, meta, path, length-bytesRemaining, bytesRemaining,
-                blkLocations[blkIndex].getHosts()));
+        } else {
+          if (splittable) {
+            for (BlockLocation blockLocation : blkLocations) {
+              splits.add(makeSplit(tableName, meta, path, blockLocation, null));
+            }
+          } else { // Non splittable
+            splits.add(makeNonSplit(tableName, meta, path, 0, length, blkLocations));
           }
-        } else { // not splitable
-          splits.add(makeSplit(tableName, meta, path, 0, length, blkLocations[0].getHosts()));
         }
       } else {
-        //Create empty hosts array for zero length files
-        splits.add(makeSplit(tableName, meta, path, 0, length, new String[0]));
+        //for zero length files
+        splits.add(makeSplit(tableName, meta, path, 0, length));
       }
     }
-    // Save the number of input files for metrics/loadgen
-    //job.getConfiguration().setLong(NUM_INPUT_FILES, files.size());
+
     LOG.debug("Total # of splits: " + splits.size());
     return splits;
   }
@@ -545,13 +646,13 @@ public class StorageManager {
     }
   }
 
-  private static final Class<?> [] DEFAULT_SCANNER_PARAMS = {
+  private static final Class<?>[] DEFAULT_SCANNER_PARAMS = {
       Configuration.class,
       TableMeta.class,
       Fragment.class
   };
 
-  private static final Class<?> [] DEFAULT_APPENDER_PARAMS = {
+  private static final Class<?>[] DEFAULT_APPENDER_PARAMS = {
       Configuration.class,
       TableMeta.class,
       Path.class
@@ -570,7 +671,7 @@ public class StorageManager {
         meth.setAccessible(true);
         CONSTRUCTOR_CACHE.put(theClass, meth);
       }
-      result = meth.newInstance(new Object[] {conf, meta, fragment});
+      result = meth.newInstance(new Object[]{conf, meta, fragment});
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -582,7 +683,7 @@ public class StorageManager {
    * create a scanner instance.
    */
   public static <T> T newAppenderInstance(Class<T> theClass, Configuration conf, TableMeta meta,
-                                         Path path) {
+                                          Path path) {
     T result;
     try {
       Constructor<T> meth = (Constructor<T>) CONSTRUCTOR_CACHE.get(theClass);
@@ -591,7 +692,7 @@ public class StorageManager {
         meth.setAccessible(true);
         CONSTRUCTOR_CACHE.put(theClass, meth);
       }
-      result = meth.newInstance(new Object[] {conf, meta, path});
+      result = meth.newInstance(new Object[]{conf, meta, path});
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

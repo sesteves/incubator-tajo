@@ -18,14 +18,50 @@
 
 package org.apache.tajo.datum;
 
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.util.Bytes;
+
+import java.io.UnsupportedEncodingException;
 
 public class DatumFactory {
 
   public static Datum create(DataType type, byte[] val) {
     return create(type.getType(), val);
+  }
+
+  public static Class<? extends Datum> getDatumClass(Type type) {
+    switch (type) {
+      case BOOLEAN:
+        return BooleanDatum.class;
+      case INT2:
+        return Int2Datum.class;
+      case INT4:
+        return Int4Datum.class;
+      case INT8:
+        return Int8Datum.class;
+      case FLOAT4:
+        return Float4Datum.class;
+      case FLOAT8:
+        return Float8Datum.class;
+      case CHAR:
+        return CharDatum.class;
+      case TEXT:
+        return TextDatum.class;
+      case BIT:
+        return BitDatum.class;
+      case BLOB:
+        return BlobDatum.class;
+      case INET4:
+        return Inet4Datum.class;
+      case ANY:
+        return NullDatum.class;
+      case ARRAY:
+        return ArrayDatum.class;
+      default:
+        throw new UnsupportedOperationException(type.name());
+    }
   }
 
   public static Datum create(Type type, byte[]  val) {
@@ -44,7 +80,7 @@ public class DatumFactory {
       case FLOAT8:
         return createFloat8(Bytes.toDouble(val));
       case CHAR:
-        return createChar(val[0]);
+        return createChar(val);
       case TEXT:
         return createText(val);
       case BIT:
@@ -97,12 +133,14 @@ public class DatumFactory {
     return new CharDatum(val);
   }
 
-  /*
-  public static CharDatum createChar(Integer val) {
+  public static CharDatum createChar(byte[] bytes) {
+    return new CharDatum(bytes);
+  }
+
+  public static CharDatum createChar(String val) {
     return new CharDatum(val);
   }
-  */
-	
+
 	public static Int2Datum createInt2(short val) {
 		return new Int2Datum(val);
 	}

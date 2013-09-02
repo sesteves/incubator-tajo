@@ -49,9 +49,8 @@ public class TpchTestBase {
     try {
       testBase = new TpchTestBase();
       testBase.setUp();
-      Runtime.getRuntime().addShutdownHook(new ShutdownHook());
     } catch (Exception e) {
-      LOG.error(e);
+      LOG.error(e.getMessage(), e);
     }
   }
 
@@ -75,6 +74,9 @@ public class TpchTestBase {
     File file;
     for (int i = 0; i < names.length; i++) {
       file = new File("src/test/tpch/" + names[i] + ".tbl");
+      if(!file.exists()) {
+        file = new File(System.getProperty("user.dir") + "/tajo-core/tajo-core-backend/src/test/tpch/" + names[i] + ".tbl");
+      }
       tables[i] = FileUtil.readTextFile(file).split("\n");
       paths[i] = file.getAbsolutePath();
     }
@@ -104,19 +106,11 @@ public class TpchTestBase {
     return util.getTestingCluster();
   }
 
-  public static class ShutdownHook extends Thread {
-
-    @Override
-    public void run() {
-      try {
-        testBase.tearDown();
-      } catch (IOException e) {
-        LOG.error(e);
-      }
+  public void tearDown() throws IOException {
+    try {
+      Thread.sleep(2000);
+    } catch (InterruptedException e) {
     }
-  }
-
-  private void tearDown() throws IOException {
     util.shutdown();
   }
 }

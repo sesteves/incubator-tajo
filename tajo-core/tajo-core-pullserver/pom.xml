@@ -59,7 +59,7 @@
       <scope>compile</scope>
     </dependency>
     <dependency>
-      <groupId>org.jboss.netty</groupId>
+      <groupId>io.netty</groupId>
       <artifactId>netty</artifactId>
       <scope>compile</scope>
     </dependency>
@@ -154,16 +154,6 @@
 
   <reporting>
     <plugins>
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>findbugs-maven-plugin</artifactId>
-        <version>2.3.2</version>
-        <configuration>
-          <xmlOutput>true</xmlOutput>
-          <xmlOutputDirectory>target/findbugs</xmlOutputDirectory>
-          <!--<excludeFilterFile>src/main/findbugs/findbugs-exclude.xml</excludeFilterFile>-->
-        </configuration>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-project-info-reports-plugin</artifactId>

@@ -117,7 +117,7 @@ public class RCFileWrapper {
               break;
             case ARRAY: {
               ArrayDatum array = (ArrayDatum) t.get(i);
-              String json = array.toJSON();
+              String json = array.toJson();
               bytes = json.getBytes();
               cu = new BytesRefWritable(bytes, 0, bytes.length);
               byteRef.set(i, cu);
@@ -250,8 +250,9 @@ public class RCFileWrapper {
                   DatumFactory.createBit(column.get(tid).getBytesCopy()[0]));
               break;
             case CHAR:
+              byte[] buf = column.get(tid).getBytesCopy();
               tuple.put(tid,
-                  DatumFactory.createChar(column.get(tid).getBytesCopy()[0]));
+                  DatumFactory.createChar(buf));
               break;
 
             case INT2:
@@ -332,6 +333,11 @@ public class RCFileWrapper {
     @Override
     public boolean isSelectable() {
       return false;
+    }
+
+    @Override
+    public boolean isSplittable(){
+      return true;
     }
   }
 }

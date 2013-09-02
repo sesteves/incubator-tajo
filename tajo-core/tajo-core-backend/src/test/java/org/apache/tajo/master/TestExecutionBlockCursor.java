@@ -16,21 +16,26 @@ package org.apache.tajo.master;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
-import org.junit.BeforeClass;
-import org.junit.Test;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoTestingCluster;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.benchmark.TPCH;
-import org.apache.tajo.catalog.*;
+import org.apache.tajo.catalog.CatalogService;
+import org.apache.tajo.catalog.CatalogUtil;
+import org.apache.tajo.catalog.TableDesc;
+import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
+import org.apache.tajo.engine.planner.LogicalOptimizer;
+import org.apache.tajo.engine.planner.LogicalPlan;
 import org.apache.tajo.engine.planner.LogicalPlanner;
-import org.apache.tajo.engine.planner.PlanningContext;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.logical.LogicalRootNode;
 import org.apache.tajo.storage.StorageManager;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 
@@ -39,8 +44,9 @@ public class TestExecutionBlockCursor {
   private static TajoConf conf;
   private static CatalogService catalog;
   private static GlobalPlanner planner;
-  private static QueryAnalyzer analyzer;
+  private static SQLAnalyzer analyzer;
   private static LogicalPlanner logicalPlanner;
+  private static LogicalOptimizer optimizer;
 
   @BeforeClass
   public static void setUp() throws Exception {
@@ -58,14 +64,15 @@ public class TestExecutionBlockCursor {
       catalog.addTable(d);
     }
 
-    analyzer = new QueryAnalyzer(catalog);
+    analyzer = new SQLAnalyzer();
     logicalPlanner = new LogicalPlanner(catalog);
+    optimizer = new LogicalOptimizer();
 
     StorageManager sm  = new StorageManager(conf);
     AsyncDispatcher dispatcher = new AsyncDispatcher();
     dispatcher.init(conf);
     dispatcher.start();
-    planner = new GlobalPlanner(conf, catalog, sm, dispatcher.getEventHandler());
+    planner = new GlobalPlanner(conf, sm, dispatcher.getEventHandler());
   }
 
   public static void tearDown() {
@@ -74,15 +81,16 @@ public class TestExecutionBlockCursor {
 
   @Test
   public void testNextBlock() throws Exception {
-    PlanningContext context = analyzer.parse(
+    Expr context = analyzer.parse(
         "select s_acctbal, s_name, n_name, p_partkey, p_mfgr, s_address, s_phone, s_comment, ps_supplycost, " +
             "r_name, p_type, p_size " +
             "from region join nation on n_regionkey = r_regionkey and r_name = 'AMERICA' " +
             "join supplier on s_nationkey = n_nationkey " +
             "join partsupp on s_suppkey = ps_suppkey " +
             "join part on p_partkey = ps_partkey and p_type like '%BRASS' and p_size = 15");
-    LogicalNode logicalPlan = logicalPlanner.createPlan(context);
-    MasterPlan plan = planner.build(QueryIdFactory.newQueryId(), (LogicalRootNode) logicalPlan);
+    LogicalPlan logicalPlan = logicalPlanner.createPlan(context);
+    LogicalNode rootNode = optimizer.optimize(logicalPlan);
+    MasterPlan plan = planner.build(QueryIdFactory.newQueryId(), (LogicalRootNode) rootNode);
 
     ExecutionBlockCursor cursor = new ExecutionBlockCursor(plan);
 
@@ -92,7 +100,7 @@ public class TestExecutionBlockCursor {
       count++;
     }
 
-    // 4 input relations, 4 join, and 1 projection = 10 execution blocks
-    assertEquals(10, count);
+    // 4 input relations, 4 join, and 1 projection = 9 execution blocks
+    assertEquals(9, count);
   }
 }

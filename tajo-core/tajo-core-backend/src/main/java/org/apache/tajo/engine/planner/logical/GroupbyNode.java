@@ -21,26 +21,20 @@ package org.apache.tajo.engine.planner.logical;
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.engine.eval.EvalNode;
-import org.apache.tajo.engine.json.GsonCreator;
-import org.apache.tajo.engine.parser.QueryBlock;
+import org.apache.tajo.engine.planner.Target;
 import org.apache.tajo.util.TUtil;
 
-import java.util.Arrays;
-
-public class GroupbyNode extends UnaryNode implements Cloneable {
-	@Expose
-	private Column[] columns;
-	@Expose
-	private EvalNode havingCondition = null;
-	@Expose
-	private QueryBlock.Target[] targets;
+public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
+	@Expose private Column [] columns;
+	@Expose private EvalNode havingCondition = null;
+	@Expose private Target [] targets;
 	
 	public GroupbyNode() {
 		super();
 	}
 	
 	public GroupbyNode(final Column [] columns) {
-		super(ExprType.GROUP_BY);
+		super(NodeType.GROUP_BY);
 		this.columns = columns;
 	}
 	
@@ -65,21 +59,24 @@ public class GroupbyNode extends UnaryNode implements Cloneable {
 	public final void setHavingCondition(final EvalNode evalTree) {
 	  this.havingCondition = evalTree;
 	}
-	
-  public boolean hasTargetList() {
+
+  @Override
+  public boolean hasTargets() {
     return this.targets != null;
   }
 
-  public QueryBlock.Target[] getTargets() {
-    return this.targets;
-  }
-
-  public void setTargetList(QueryBlock.Target[] targets) {
+  @Override
+  public void setTargets(Target[] targets) {
     this.targets = targets;
   }
+
+  @Override
+  public Target[] getTargets() {
+    return this.targets;
+  }
   
-  public void setSubNode(LogicalNode subNode) {
-    super.setSubNode(subNode);
+  public void setChild(LogicalNode subNode) {
+    super.setChild(subNode);
   }
   
   public String toString() {
@@ -91,9 +88,9 @@ public class GroupbyNode extends UnaryNode implements Cloneable {
     }
     
     if(hasHavingCondition()) {
-      sb.append("], \"having qual\": \""+havingCondition+"\"");
+      sb.append("], \"having qual\": \"").append(havingCondition).append("\"");
     }
-    if(hasTargetList()) {
+    if(hasTargets()) {
       sb.append(", \"target\": [");
       for (int i = 0; i < targets.length; i++) {
         sb.append("\"").append(targets[i]).append("\"");
@@ -108,18 +105,19 @@ public class GroupbyNode extends UnaryNode implements Cloneable {
     sb.append("}");
     
     return sb.toString() + "\n"
-        + getSubNode().toString();
+        + getChild().toString();
   }
   
   @Override
   public boolean equals(Object obj) {
     if (obj instanceof GroupbyNode) {
       GroupbyNode other = (GroupbyNode) obj;
-      return super.equals(other) 
-          && Arrays.equals(columns, other.columns)
-          && TUtil.checkEquals(havingCondition, other.havingCondition)
-          && TUtil.checkEquals(targets, other.targets)
-          && getSubNode().equals(other.getSubNode());
+      boolean eq = super.equals(other);
+      eq = eq && TUtil.checkEquals(columns, other.columns);
+      eq = eq && TUtil.checkEquals(havingCondition, other.havingCondition);
+      eq = eq && TUtil.checkEquals(targets, other.targets);
+      eq = eq && child.equals(other.child);
+      return eq;
     } else {
       return false;  
     }
@@ -137,16 +135,12 @@ public class GroupbyNode extends UnaryNode implements Cloneable {
     grp.havingCondition = (EvalNode) (havingCondition != null 
         ? havingCondition.clone() : null);    
     if (targets != null) {
-      grp.targets = new QueryBlock.Target[targets.length];
+      grp.targets = new Target[targets.length];
       for (int i = 0; i < targets.length; i++) {
-        grp.targets[i] = (QueryBlock.Target) targets[i].clone();
+        grp.targets[i] = (Target) targets[i].clone();
       }
     }
 
     return grp;
-  }
-  
-  public String toJSON() {
-    return GsonCreator.getInstance().toJson(this, LogicalNode.class);
   }
 }
