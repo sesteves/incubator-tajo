@@ -18,13 +18,19 @@
 
 package org.apache.tajo.engine.parser;
 
+import static org.apache.tajo.engine.parser.SQLParser.ALL;
+import static org.apache.tajo.engine.parser.SQLParser.DIVIDE;
+import static org.apache.tajo.engine.parser.SQLParser.INTERSECT;
+import static org.apache.tajo.engine.parser.SQLParser.MULTIPLY;
+import static org.apache.tajo.engine.parser.SQLParser.PLUS;
+import static org.apache.tajo.engine.parser.SQLParser.UNION;
+
 import java.util.HashMap;
 import java.util.Map;
 
 import org.antlr.v4.runtime.ANTLRInputStream;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.tree.TerminalNode;
-import org.apache.derby.impl.sql.compile.SQLParser;
 import org.apache.tajo.algebra.Aggregation;
 import org.apache.tajo.algebra.Aggregation.GroupElement;
 import org.apache.tajo.algebra.Aggregation.GroupType;
