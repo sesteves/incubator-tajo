@@ -11,6 +11,7 @@ import java.util.TreeMap;
 import org.apache.hadoop.fs.Path;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.CatalogService;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
@@ -21,11 +22,10 @@ import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
-import org.apache.tajo.engine.parser.QueryAnalyzer;
+import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
-import org.apache.tajo.engine.planner.PlanningContext;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.storage.Appender;
 import org.apache.tajo.storage.Fragment;
@@ -48,7 +48,7 @@ public class TestHybridHashJoinExec {
   private final String TEST_PATH = "target/test-data/TestHybridHashJoinExec";
   private TajoTestingCluster util;
   private CatalogService catalog;
-  private QueryAnalyzer analyzer;
+  private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
   private StorageManager sm;
   private Path testDir;
@@ -108,7 +108,7 @@ public class TestHybridHashJoinExec {
 
     people = CatalogUtil.newTableDesc("people", peopleMeta, peoplePath);
     catalog.addTable(people);
-    analyzer = new QueryAnalyzer(catalog);
+    analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
   }
 
@@ -151,8 +151,8 @@ public class TestHybridHashJoinExec {
     }
     ctx.setHistogram(histogram);
 
-    PlanningContext context = analyzer.parse(QUERIES[0]);
-    LogicalNode plan = planner.createPlan(context);
+    Expr expr = analyzer.parse(QUERIES[0]);
+    LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf, sm);
     return phyPlanner.createPlan(ctx, plan);

@@ -14,11 +14,6 @@
 
 package org.apache.tajo.master;
 
-import com.google.common.base.Preconditions;
-import org.apache.tajo.ExecutionBlockId;
-import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.engine.planner.logical.*;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -26,22 +21,37 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.catalog.Column;
+import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.engine.planner.PlannerUtil;
+import org.apache.tajo.engine.planner.logical.BinaryNode;
+import org.apache.tajo.engine.planner.logical.JoinNode;
+import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
+import org.apache.tajo.engine.planner.logical.ScanNode;
+import org.apache.tajo.engine.planner.logical.StoreTableNode;
+import org.apache.tajo.engine.planner.logical.UnaryNode;
+
+import com.google.common.base.Preconditions;
+
 /**
- * A distributed execution plan (DEP) is a direct acyclic graph (DAG) of ExecutionBlocks.
- * An ExecutionBlock is a basic execution unit that could be distributed across a number of nodes.
- * An ExecutionBlock class contains input information (e.g., child execution blocks or input
- * tables), and output information (e.g., partition type, partition key, and partition number).
- * In addition, it includes a logical plan to be executed in each node.
+ * A distributed execution plan (DEP) is a direct acyclic graph (DAG) of
+ * ExecutionBlocks. An ExecutionBlock is a basic execution unit that could be
+ * distributed across a number of nodes. An ExecutionBlock class contains input
+ * information (e.g., child execution blocks or input tables), and output
+ * information (e.g., partition type, partition key, and partition number). In
+ * addition, it includes a logical plan to be executed in each node.
  */
 public class ExecutionBlock {
 
   public static enum PartitionType {
-	/** for hash partitioning */
-	HASH, LIST,
-	/** for map-side join */
-	BROADCAST,
-	/** for range partitioning */
-	RANGE
+    /** for hash partitioning */
+    HASH, LIST,
+    /** for map-side join */
+    BROADCAST,
+    /** for range partitioning */
+    RANGE
   }
 
   private ExecutionBlockId executionBlockId;
@@ -89,7 +99,7 @@ public class ExecutionBlock {
     ArrayList<LogicalNode> s = new ArrayList<LogicalNode>();
     s.add(node);
     while (!s.isEmpty()) {
-      node = s.remove(s.size()-1);
+      node = s.remove(s.size() - 1);
       if (node instanceof UnaryNode) {
         UnaryNode unary = (UnaryNode) node;
         s.add(s.size(), unary.getChild());
@@ -97,16 +107,16 @@ public class ExecutionBlock {
         BinaryNode binary = (BinaryNode) node;
         if (binary.getType() == NodeType.JOIN) {
           hasJoinPlan = true;
-		  JoinNode joinNode = (JoinNode) node;
-		  joinKeyPairs = PlannerUtil.getJoinKeyPairs(joinNode.getJoinQual(), joinNode.getOuterNode().getOutSchema(),
-			  joinNode.getInnerNode().getOutSchema());
+          JoinNode joinNode = (JoinNode) node;
+          joinKeyPairs = PlannerUtil.getJoinKeyPairs(joinNode.getJoinQual(), joinNode.getLeftChild().getOutSchema(),
+              joinNode.getRightChild().getOutSchema());
         } else if (binary.getType() == NodeType.UNION) {
           hasUnionPlan = true;
         }
         s.add(s.size(), binary.getLeftChild());
         s.add(s.size(), binary.getRightChild());
       } else if (node instanceof ScanNode) {
-        scanlist.add((ScanNode)node);
+        scanlist.add((ScanNode) node);
       }
     }
   }
@@ -168,7 +178,7 @@ public class ExecutionBlock {
     return store;
   }
 
-  public ScanNode [] getScanNodes() {
+  public ScanNode[] getScanNodes() {
     return this.scanlist.toArray(new ScanNode[scanlist.size()]);
   }
 
@@ -181,18 +191,18 @@ public class ExecutionBlock {
   }
 
   public boolean hasUnion() {
-	return hasUnionPlan;
+    return hasUnionPlan;
   }
 
   public List<Column[]> getJoinKeyPairs() {
-	return joinKeyPairs;
+    return joinKeyPairs;
   }
 
   public Map<Integer, Long> getHistogram() {
-	return histogram;
+    return histogram;
   }
 
   public void setHistogram(Map<Integer, Long> histogram) {
-	this.histogram = histogram;
+    this.histogram = histogram;
   }
 }

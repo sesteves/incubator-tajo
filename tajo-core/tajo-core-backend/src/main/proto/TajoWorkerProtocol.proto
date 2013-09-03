@@ -62,12 +62,12 @@ message QueryUnitRequestProto {
     repeated int32 joinKeys = 9;
     repeated KeyValue histogram = 10;        
 }
-
+/*
 message KeyValue {
   required int32 key = 1;
   required int64 value = 2;
 }
-
+*/
 message Fetch {
     required string name = 1;
     required string urls = 2;

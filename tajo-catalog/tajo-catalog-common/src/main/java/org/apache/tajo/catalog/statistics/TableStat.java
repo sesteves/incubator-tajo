@@ -21,31 +21,41 @@
  */
 package org.apache.tajo.catalog.statistics;
 
-import com.google.common.base.Objects;
-import com.google.gson.Gson;
-import com.google.gson.annotations.Expose;
-import org.apache.tajo.json.GsonObject;
-import org.apache.tajo.catalog.json.CatalogGsonHelper;
-import org.apache.tajo.catalog.proto.CatalogProtos.ColumnStatProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
-import org.apache.tajo.common.ProtoObject;
-import org.apache.tajo.util.TUtil;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.tajo.catalog.json.CatalogGsonHelper;
+import org.apache.tajo.catalog.proto.CatalogProtos.ColumnStatProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue;
+import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue.Builder;
+import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
+import org.apache.tajo.common.ProtoObject;
+import org.apache.tajo.json.GsonObject;
+import org.apache.tajo.util.TUtil;
+
+import com.google.common.base.Objects;
+import com.google.gson.Gson;
+import com.google.gson.annotations.Expose;
+
 public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonObject {
   private TableStatProto.Builder builder = TableStatProto.newBuilder();
 
-  @Expose private Long numRows = null; // required
-  @Expose private Long numBytes = null; // required
-  @Expose private Integer numBlocks = null; // optional
-  @Expose private Integer numPartitions = null; // optional
-  @Expose private Long avgRows = null; // optional
-  @Expose private List<ColumnStat> columnStats = null; // repeated
-  @Expose private Map<Integer, Long> histogram = null; // repeated
+  @Expose
+  private Long numRows = null; // required
+  @Expose
+  private Long numBytes = null; // required
+  @Expose
+  private Integer numBlocks = null; // optional
+  @Expose
+  private Integer numPartitions = null; // optional
+  @Expose
+  private Long avgRows = null; // optional
+  @Expose
+  private List<ColumnStat> columnStats = null; // repeated
+  @Expose
+  private Map<Integer, Long> histogram = null; // repeated
 
   public TableStat() {
     numRows = 0l;
@@ -73,6 +83,13 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
     this.columnStats = TUtil.newList();
     for (ColumnStatProto colProto : proto.getColStatList()) {
       columnStats.add(new ColumnStat(colProto));
+    }
+
+    if (proto.getHistogramCount() > 0) {
+      this.histogram = new TreeMap<Integer, Long>();
+      for (KeyValue kv : proto.getHistogramList()) {
+        histogram.put(kv.getKey(), kv.getValue());
+      }
     }
   }
 
@@ -132,20 +149,17 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
     if (obj instanceof TableStat) {
       TableStat other = (TableStat) obj;
 
-      return this.numRows.equals(other.numRows)
-          && this.numBytes.equals(other.numBytes)
+      return this.numRows.equals(other.numRows) && this.numBytes.equals(other.numBytes)
           && TUtil.checkEquals(this.numBlocks, other.numBlocks)
           && TUtil.checkEquals(this.numPartitions, other.numPartitions)
-          && TUtil.checkEquals(this.avgRows, other.avgRows)
-          && TUtil.checkEquals(this.columnStats, other.columnStats);
+          && TUtil.checkEquals(this.avgRows, other.avgRows) && TUtil.checkEquals(this.columnStats, other.columnStats);
     } else {
       return false;
     }
   }
 
   public int hashCode() {
-    return Objects.hashCode(numRows, numBytes,
-        numBlocks, numPartitions, columnStats);
+    return Objects.hashCode(numRows, numBytes, numBlocks, numPartitions, columnStats);
   }
 
   public Object clone() throws CloneNotSupportedException {
@@ -195,31 +209,24 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
         builder.addColStat(colStat.getProto());
       }
     }
-	if (this.histogram != null) {
-	  for (int key : histogram.keySet()) {
-		Builder kvBuilder = KeyValue.newBuilder();
-		kvBuilder.setKey(key);
-		kvBuilder.setValue(histogram.get(key));
-		builder.addHistogram(kvBuilder.build());
-	  }
-	}
+    if (this.histogram != null) {
+      for (int key : histogram.keySet()) {
+        Builder kvBuilder = KeyValue.newBuilder();
+        kvBuilder.setKey(key);
+        kvBuilder.setValue(histogram.get(key));
+        builder.addHistogram(kvBuilder.build());
+      }
+    }
 
     return builder.build();
   }
 
   public Map<Integer, Long> getHistogram() {
-	if (histogram == null) {
-	  TableStatProtoOrBuilder p = viaProto ? proto : builder;
-	  this.histogram = new TreeMap<Integer, Long>();
-	  for (KeyValue kv : p.getHistogramList()) {
-		histogram.put(kv.getKey(), kv.getValue());
-	  }
-	}
-	return histogram;
+    return histogram;
   }
 
   public void setHistogram(Map<Integer, Long> histogram) {
-	this.histogram = histogram;
+    this.histogram = histogram;
   }
 
 }

@@ -18,25 +18,6 @@
 
 package org.apache.tajo.master.querymaster;
 
-import com.google.common.collect.Maps;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.yarn.Clock;
-import org.apache.hadoop.yarn.event.EventHandler;
-import org.apache.hadoop.yarn.state.*;
-import org.apache.tajo.ExecutionBlockId;
-import org.apache.tajo.QueryConf;
-import org.apache.tajo.QueryId;
-import org.apache.tajo.TajoProtos.QueryState;
-import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.catalog.TableDescImpl;
-import org.apache.tajo.engine.planner.global.MasterPlan;
-import org.apache.tajo.master.ExecutionBlock;
-import org.apache.tajo.master.ExecutionBlockCursor;
-import org.apache.tajo.master.event.*;
-import org.apache.tajo.storage.StorageManager;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -45,6 +26,38 @@ import java.util.Map;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.yarn.Clock;
+import org.apache.hadoop.yarn.event.EventHandler;
+import org.apache.hadoop.yarn.state.InvalidStateTransitonException;
+import org.apache.hadoop.yarn.state.MultipleArcTransition;
+import org.apache.hadoop.yarn.state.SingleArcTransition;
+import org.apache.hadoop.yarn.state.StateMachine;
+import org.apache.hadoop.yarn.state.StateMachineFactory;
+import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.QueryConf;
+import org.apache.tajo.QueryId;
+import org.apache.tajo.TajoProtos.QueryState;
+import org.apache.tajo.catalog.TableDesc;
+import org.apache.tajo.catalog.TableDescImpl;
+import org.apache.tajo.catalog.statistics.TableStat;
+import org.apache.tajo.engine.planner.global.MasterPlan;
+import org.apache.tajo.master.ExecutionBlock;
+import org.apache.tajo.master.ExecutionBlockCursor;
+import org.apache.tajo.master.event.QueryDiagnosticsUpdateEvent;
+import org.apache.tajo.master.event.QueryEvent;
+import org.apache.tajo.master.event.QueryEventType;
+import org.apache.tajo.master.event.QueryFinishEvent;
+import org.apache.tajo.master.event.SubQueryCompletedEvent;
+import org.apache.tajo.master.event.SubQueryEvent;
+import org.apache.tajo.master.event.SubQueryEventType;
+import org.apache.tajo.master.event.SubQuerySucceeEvent;
+import org.apache.tajo.storage.StorageManager;
+
+import com.google.common.collect.Maps;
 
 public class Query implements EventHandler<QueryEvent> {
   private static final Log LOG = LogFactory.getLog(Query.class);
@@ -78,37 +91,27 @@ public class Query implements EventHandler<QueryEvent> {
   // State Machine
   private final StateMachine<QueryState, QueryEventType, QueryEvent> stateMachine;
 
-  private static final StateMachineFactory
-      <Query,QueryState,QueryEventType,QueryEvent> stateMachineFactory =
-      new StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent>
-          (QueryState.QUERY_NEW)
+  private static final StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent> stateMachineFactory = new StateMachineFactory<Query, QueryState, QueryEventType, QueryEvent>(
+      QueryState.QUERY_NEW)
 
-      .addTransition(QueryState.QUERY_NEW,
-          EnumSet.of(QueryState.QUERY_INIT, QueryState.QUERY_FAILED),
+      .addTransition(QueryState.QUERY_NEW, EnumSet.of(QueryState.QUERY_INIT, QueryState.QUERY_FAILED),
           QueryEventType.INIT, new InitTransition())
 
-      .addTransition(QueryState.QUERY_INIT, QueryState.QUERY_RUNNING,
-          QueryEventType.START, new StartTransition())
+      .addTransition(QueryState.QUERY_INIT, QueryState.QUERY_RUNNING, QueryEventType.START, new StartTransition())
 
-      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_RUNNING,
-          QueryEventType.INIT_COMPLETED, new InitCompleteTransition())
+      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_RUNNING, QueryEventType.INIT_COMPLETED,
+          new InitCompleteTransition())
       .addTransition(QueryState.QUERY_RUNNING,
-          EnumSet.of(QueryState.QUERY_RUNNING, QueryState.QUERY_SUCCEEDED,
-              QueryState.QUERY_FAILED),
-          QueryEventType.SUBQUERY_COMPLETED,
-          new SubQueryCompletedTransition())
-      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_ERROR,
-          QueryEventType.INTERNAL_ERROR, new InternalErrorTransition())
-       .addTransition(QueryState.QUERY_ERROR, QueryState.QUERY_ERROR,
-          QueryEventType.INTERNAL_ERROR)
+          EnumSet.of(QueryState.QUERY_RUNNING, QueryState.QUERY_SUCCEEDED, QueryState.QUERY_FAILED),
+          QueryEventType.SUBQUERY_COMPLETED, new SubQueryCompletedTransition())
+      .addTransition(QueryState.QUERY_RUNNING, QueryState.QUERY_ERROR, QueryEventType.INTERNAL_ERROR,
+          new InternalErrorTransition())
+      .addTransition(QueryState.QUERY_ERROR, QueryState.QUERY_ERROR, QueryEventType.INTERNAL_ERROR)
 
       .installTopology();
 
-  public Query(final QueryMasterTask.QueryContext context, final QueryId id,
-               final long appSubmitTime,
-               final String queryStr,
-               final EventHandler eventHandler,
-               final MasterPlan plan) {
+  public Query(final QueryMasterTask.QueryContext context, final QueryId id, final long appSubmitTime,
+      final String queryStr, final EventHandler eventHandler, final MasterPlan plan) {
     this.context = context;
     this.conf = context.getConf();
     this.id = id;
@@ -135,12 +138,12 @@ public class Query implements EventHandler<QueryEvent> {
     } else {
       int idx = 0;
       List<SubQuery> tempSubQueries = new ArrayList<SubQuery>();
-      synchronized(subqueries) {
+      synchronized (subqueries) {
         tempSubQueries.addAll(subqueries.values());
       }
-      float [] subProgresses = new float[tempSubQueries.size()];
+      float[] subProgresses = new float[tempSubQueries.size()];
       boolean finished = true;
-      for (SubQuery subquery: tempSubQueries) {
+      for (SubQuery subquery : tempSubQueries) {
         if (subquery.getState() != SubQueryState.NEW) {
           subProgresses[idx] = subquery.getProgress();
           if (finished && subquery.getState() != SubQueryState.SUCCEEDED) {
@@ -157,7 +160,7 @@ public class Query implements EventHandler<QueryEvent> {
       }
 
       float totalProgress = 0;
-      float proportion = 1.0f / (float)subqueries.size();
+      float proportion = 1.0f / (float) subqueries.size();
 
       for (int i = 0; i < subProgresses.length; i++) {
         totalProgress += subProgresses[i] * proportion;
@@ -186,7 +189,6 @@ public class Query implements EventHandler<QueryEvent> {
   public void setInitializationTime() {
     initializationTime = clock.getTime();
   }
-
 
   public long getFinishTime() {
     return finishTime;
@@ -224,11 +226,11 @@ public class Query implements EventHandler<QueryEvent> {
   public StateMachine<QueryState, QueryEventType, QueryEvent> getStateMachine() {
     return stateMachine;
   }
-  
+
   public void addSubQuery(SubQuery subquery) {
     subqueries.put(subquery.getId(), subquery);
   }
-  
+
   public QueryId getId() {
     return this.id;
   }
@@ -250,63 +252,64 @@ public class Query implements EventHandler<QueryEvent> {
     return cursor;
   }
 
-  static class InitTransition
-      implements MultipleArcTransition<Query, QueryEvent, QueryState> {
+  static class InitTransition implements MultipleArcTransition<Query, QueryEvent, QueryState> {
 
     @Override
     public QueryState transition(Query query, QueryEvent queryEvent) {
       query.setStartTime();
-      //query.context.setState(QueryState.QUERY_INIT);
+      // query.context.setState(QueryState.QUERY_INIT);
       return QueryState.QUERY_INIT;
     }
   }
 
-  public static class StartTransition
-      implements SingleArcTransition<Query, QueryEvent> {
+  public static class StartTransition implements SingleArcTransition<Query, QueryEvent> {
 
     @Override
     public void transition(Query query, QueryEvent queryEvent) {
-      SubQuery subQuery = new SubQuery(query.context, query.getExecutionBlockCursor().nextBlock(),
-          query.sm);
+      SubQuery subQuery = new SubQuery(query.context, query.getExecutionBlockCursor().nextBlock(), query.sm);
       subQuery.setPriority(query.priority--);
       query.addSubQuery(subQuery);
       LOG.debug("Schedule unit plan: \n" + subQuery.getBlock().getPlan());
 
-      subQuery.handle(new SubQueryEvent(subQuery.getId(),
-          SubQueryEventType.SQ_INIT));
+      subQuery.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_INIT));
     }
   }
 
-  public static class SubQueryCompletedTransition implements
-      MultipleArcTransition<Query, QueryEvent, QueryState> {
+  public static class SubQueryCompletedTransition implements MultipleArcTransition<Query, QueryEvent, QueryState> {
 
-	private Long histogramBytes = Long.MAX_VALUE;
-	private Map<Integer, Long> histogram;
+    private Long histogramBytes = Long.MAX_VALUE;
+    private Map<Integer, Long> histogram;
+
+    @Override
+    public QueryState transition(Query query, QueryEvent event) {
+      // increase the count for completed subqueries
+      query.completedSubQueryCount++;
+      SubQueryCompletedEvent castEvent = (SubQueryCompletedEvent) event;
+      ExecutionBlockCursor cursor = query.getExecutionBlockCursor();
 
       // if the subquery is succeeded
       if (castEvent.getFinalState() == SubQueryState.SUCCEEDED) {
         if (cursor.hasNext()) {
-		  ExecutionBlock nextExecutionBlock = cursor.nextBlock();
+          ExecutionBlock nextExecutionBlock = cursor.nextBlock();
           SubQuery nextSubQuery = new SubQuery(query.context, cursor.nextBlock(), query.sm);
 
           TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
-		  if (tableStat.getHistogram().size() > 0 && tableStat.getNumBytes() < histogramBytes) {
-			histogram = tableStat.getHistogram();
-			histogramBytes = tableStat.getNumBytes();
-		  }
+          if (tableStat.getHistogram().size() > 0 && tableStat.getNumBytes() < histogramBytes) {
+            histogram = tableStat.getHistogram();
+            histogramBytes = tableStat.getNumBytes();
+          }
 
-		  if (nextExecutionBlock.hasJoin() && histogram != null) {
-			nextExecutionBlock.setHistogram(histogram);
-			histogramBytes = Long.MAX_VALUE;
-			histogram = null;
-		  }
+          if (nextExecutionBlock.hasJoin() && histogram != null) {
+            nextExecutionBlock.setHistogram(histogram);
+            histogramBytes = Long.MAX_VALUE;
+            histogram = null;
+          }
 
           nextSubQuery.setPriority(query.priority--);
           query.addSubQuery(nextSubQuery);
-          nextSubQuery.handle(new SubQueryEvent(nextSubQuery.getId(),
-              SubQueryEventType.SQ_INIT));
+          nextSubQuery.handle(new SubQueryEvent(nextSubQuery.getId(), SubQueryEventType.SQ_INIT));
           LOG.info("Scheduling SubQuery:" + nextSubQuery.getId());
-          if(LOG.isDebugEnabled()) {
+          if (LOG.isDebugEnabled()) {
             LOG.debug("Scheduling SubQuery's Priority: " + nextSubQuery.getPriority());
             LOG.debug("Scheduling SubQuery's Plan: \n" + nextSubQuery.getBlock().getPlan());
           }
@@ -315,8 +318,8 @@ public class Query implements EventHandler<QueryEvent> {
         } else { // Finish a query
           if (query.checkQueryForCompleted() == QueryState.QUERY_SUCCEEDED) {
             SubQuery subQuery = query.getSubQuery(castEvent.getExecutionBlockId());
-            TableDesc desc = new TableDescImpl(query.conf.getOutputTable(),
-                subQuery.getTableMeta(), query.context.getOutputPath());
+            TableDesc desc = new TableDescImpl(query.conf.getOutputTable(), subQuery.getTableMeta(),
+                query.context.getOutputPath());
             query.setResultDesc(desc);
             try {
               query.writeStat(query.context.getOutputPath(), subQuery);
@@ -327,7 +330,7 @@ public class Query implements EventHandler<QueryEvent> {
 
             if (query.context.isCreateTableQuery()) {
               // TOOD move to QueryJobManager
-              //query.context.getCatalog().addTable(desc);
+              // query.context.getCatalog().addTable(desc);
             }
           }
 
@@ -340,17 +343,14 @@ public class Query implements EventHandler<QueryEvent> {
     }
   }
 
-  private static class DiagnosticsUpdateTransition implements
-      SingleArcTransition<Query, QueryEvent> {
+  private static class DiagnosticsUpdateTransition implements SingleArcTransition<Query, QueryEvent> {
     @Override
     public void transition(Query query, QueryEvent event) {
-      query.addDiagnostic(((QueryDiagnosticsUpdateEvent) event)
-          .getDiagnosticUpdate());
+      query.addDiagnostic(((QueryDiagnosticsUpdateEvent) event).getDiagnosticUpdate());
     }
   }
 
-  private static class InitCompleteTransition implements
-      SingleArcTransition<Query, QueryEvent> {
+  private static class InitCompleteTransition implements SingleArcTransition<Query, QueryEvent> {
     @Override
     public void transition(Query query, QueryEvent event) {
       if (query.initializationTime == 0) {
@@ -359,8 +359,7 @@ public class Query implements EventHandler<QueryEvent> {
     }
   }
 
-  private static class InternalErrorTransition
-      implements SingleArcTransition<Query, QueryEvent> {
+  private static class InternalErrorTransition implements SingleArcTransition<Query, QueryEvent> {
 
     @Override
     public void transition(Query query, QueryEvent event) {
@@ -375,6 +374,7 @@ public class Query implements EventHandler<QueryEvent> {
 
   /**
    * Check if all subqueries of the query are completed
+   * 
    * @return QueryState.QUERY_SUCCEEDED if all subqueries are completed.
    */
   QueryState checkQueryForCompleted() {
@@ -383,7 +383,6 @@ public class Query implements EventHandler<QueryEvent> {
     }
     return getState();
   }
-
 
   @Override
   public void handle(QueryEvent event) {
@@ -395,14 +394,12 @@ public class Query implements EventHandler<QueryEvent> {
         getStateMachine().doTransition(event.getType(), event);
       } catch (InvalidStateTransitonException e) {
         LOG.error("Can't handle this event at current state", e);
-        eventHandler.handle(new QueryEvent(this.id,
-            QueryEventType.INTERNAL_ERROR));
+        eventHandler.handle(new QueryEvent(this.id, QueryEventType.INTERNAL_ERROR));
       }
 
-      //notify the eventhandler of state change
+      // notify the eventhandler of state change
       if (oldState != getState()) {
-        LOG.info(id + " Query Transitioned from " + oldState + " to "
-            + getState());
+        LOG.info(id + " Query Transitioned from " + oldState + " to " + getState());
       }
     }
 
@@ -411,8 +408,7 @@ public class Query implements EventHandler<QueryEvent> {
     }
   }
 
-  private void writeStat(Path outputPath, SubQuery subQuery)
-      throws IOException {
+  private void writeStat(Path outputPath, SubQuery subQuery) throws IOException {
     ExecutionBlock execBlock = subQuery.getBlock();
     sm.writeTableMeta(outputPath, subQuery.getTableMeta());
   }
