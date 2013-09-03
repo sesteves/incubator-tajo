@@ -291,10 +291,11 @@ public class Query implements EventHandler<QueryEvent> {
       if (castEvent.getFinalState() == SubQueryState.SUCCEEDED) {
         if (cursor.hasNext()) {
           ExecutionBlock nextExecutionBlock = cursor.nextBlock();
-          SubQuery nextSubQuery = new SubQuery(query.context, cursor.nextBlock(), query.sm);
+          SubQuery nextSubQuery = new SubQuery(query.context, nextExecutionBlock, query.sm);
 
           TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
-          if (tableStat.getHistogram().size() > 0 && tableStat.getNumBytes() < histogramBytes) {
+          if (tableStat.getHistogram() != null && tableStat.getHistogram().size() > 0
+              && tableStat.getNumBytes() < histogramBytes) {
             histogram = tableStat.getHistogram();
             histogramBytes = tableStat.getNumBytes();
           }
