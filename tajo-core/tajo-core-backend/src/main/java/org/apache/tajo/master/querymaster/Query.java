@@ -277,6 +277,7 @@ public class Query implements EventHandler<QueryEvent> {
 
   public static class SubQueryCompletedTransition implements MultipleArcTransition<Query, QueryEvent, QueryState> {
 
+    private int histogramCount = 0;
     private Long histogramBytes = Long.MAX_VALUE;
     private Map<Integer, Long> histogram;
 
@@ -294,16 +295,19 @@ public class Query implements EventHandler<QueryEvent> {
           SubQuery nextSubQuery = new SubQuery(query.context, nextExecutionBlock, query.sm);
 
           TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
-          if (tableStat != null && tableStat.getHistogram() != null && tableStat.getHistogram().size() > 0
-              && tableStat.getNumBytes() < histogramBytes) {
-            histogram = tableStat.getHistogram();
-            histogramBytes = tableStat.getNumBytes();
+          if (tableStat != null && tableStat.getHistogram() != null && tableStat.getHistogram().size() > 0) {
+            histogramCount++;
+            if (tableStat.getNumBytes() < histogramBytes) {
+              histogram = tableStat.getHistogram();
+              histogramBytes = tableStat.getNumBytes();
+            }
           }
 
-          if (nextExecutionBlock.hasJoin() && histogram != null) {
+          if (nextExecutionBlock.hasJoin() && histogramCount == 2) {
             nextExecutionBlock.setHistogram(histogram);
             histogramBytes = Long.MAX_VALUE;
             histogram = null;
+            histogramCount = 0;
           }
 
           nextSubQuery.setPriority(query.priority--);

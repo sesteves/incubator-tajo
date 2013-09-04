@@ -137,11 +137,10 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private void partitionHistogram() throws IOException {
     Map<Integer, Long> histogram = context.getHistogram();
-    // planner will never choose HHJ if there is no histogram
-    // if (histogram == null) {
-    // throw new IOException(
-    // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
-    // }
+    if (histogram == null) {
+      throw new IOException(
+          "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
+    }
 
     int lastKey = -1;
     long accumulated = 0;
@@ -296,7 +295,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     Tuple innerKeyTuple;
 
     while ((tuple = innerChild.next()) != null) {
-
       innerKeyTuple = getKeyTuple(tuple, true);
       buckets = getBuckets(innerKeyTuple.hashCode());
       if (buckets.size() == 1) {
@@ -384,14 +382,13 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     return outTuple;
   }
 
-  private List<Bucket> getBuckets(int hashCode) {
+  private List<Bucket> getBuckets(int hashCode) throws IOException {
     for (int key : bucketsMap.keySet()) {
       if (hashCode < key) {
         return bucketsMap.get(key);
       }
     }
-    System.out.println("### RETURNED NULL ###");
-    return null;
+    throw new IOException("The histogram provided is corrupted or does not belong to the current inner relation.");
   }
 
   private Tuple getKeyTuple(Tuple tuple, boolean isInner) {

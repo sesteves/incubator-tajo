@@ -488,7 +488,6 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 
     private List<Integer> getJoinKeys(ExecutionBlock executionBlock) {
       ExecutionBlock parent = executionBlock.getParentBlock();
-
       if (parent != null && parent.hasJoin()) {
         JoinNode joinNode = (JoinNode) ((UnaryNode) parent.getPlan()).getChild();
         if (joinNode.getJoinType() == JoinType.INNER) {
