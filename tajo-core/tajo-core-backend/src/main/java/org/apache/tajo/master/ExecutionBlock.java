@@ -108,7 +108,6 @@ public class ExecutionBlock {
         if (binary.getType() == NodeType.JOIN) {
           hasJoinPlan = true;
           JoinNode joinNode = (JoinNode) node;
-
           if (joinNode.getJoinQual() != null) {
             joinKeyPairs = PlannerUtil.getJoinKeyPairs(joinNode.getJoinQual(), joinNode.getLeftChild().getOutSchema(),
                 joinNode.getRightChild().getOutSchema());

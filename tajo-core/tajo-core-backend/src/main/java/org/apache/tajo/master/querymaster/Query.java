@@ -294,7 +294,7 @@ public class Query implements EventHandler<QueryEvent> {
           SubQuery nextSubQuery = new SubQuery(query.context, nextExecutionBlock, query.sm);
 
           TableStat tableStat = ((SubQuerySucceeEvent) event).getTableMeta().getStat();
-          if (tableStat.getHistogram() != null && tableStat.getHistogram().size() > 0
+          if (tableStat != null && tableStat.getHistogram() != null && tableStat.getHistogram().size() > 0
               && tableStat.getNumBytes() < histogramBytes) {
             histogram = tableStat.getHistogram();
             histogramBytes = tableStat.getNumBytes();

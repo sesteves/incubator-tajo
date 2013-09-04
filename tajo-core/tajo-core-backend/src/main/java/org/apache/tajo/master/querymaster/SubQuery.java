@@ -18,8 +18,17 @@
 
 package org.apache.tajo.master.querymaster;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
@@ -29,7 +38,11 @@ import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.event.EventHandler;
-import org.apache.hadoop.yarn.state.*;
+import org.apache.hadoop.yarn.state.InvalidStateTransitonException;
+import org.apache.hadoop.yarn.state.MultipleArcTransition;
+import org.apache.hadoop.yarn.state.SingleArcTransition;
+import org.apache.hadoop.yarn.state.StateMachine;
+import org.apache.hadoop.yarn.state.StateMachineFactory;
 import org.apache.hadoop.yarn.util.Records;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryIdFactory;
@@ -41,6 +54,7 @@ import org.apache.tajo.catalog.statistics.ColumnStat;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.engine.planner.PlannerUtil;
 import org.apache.tajo.engine.planner.logical.GroupbyNode;
 import org.apache.tajo.engine.planner.logical.NodeType;
@@ -51,22 +65,27 @@ import org.apache.tajo.master.TaskRunnerGroupEvent;
 import org.apache.tajo.master.TaskRunnerGroupEvent.EventType;
 import org.apache.tajo.master.TaskScheduler;
 import org.apache.tajo.master.TaskSchedulerImpl;
-import org.apache.tajo.master.event.*;
+import org.apache.tajo.master.event.ContainerAllocationEvent;
+import org.apache.tajo.master.event.ContainerAllocatorEventType;
+import org.apache.tajo.master.event.QueryDiagnosticsUpdateEvent;
+import org.apache.tajo.master.event.SubQueryCompletedEvent;
+import org.apache.tajo.master.event.SubQueryContainerAllocationEvent;
+import org.apache.tajo.master.event.SubQueryEvent;
+import org.apache.tajo.master.event.SubQueryEventType;
+import org.apache.tajo.master.event.SubQuerySucceeEvent;
+import org.apache.tajo.master.event.SubQueryTaskEvent;
+import org.apache.tajo.master.event.TaskEvent;
+import org.apache.tajo.master.event.TaskEventType;
+import org.apache.tajo.master.event.TaskRequestEvent;
 import org.apache.tajo.storage.Fragment;
 import org.apache.tajo.storage.StorageManager;
 
-import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import static org.apache.tajo.conf.TajoConf.ConfVars;
-
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 
 /**
- * SubQuery plays a role in controlling an ExecutionBlock and is a finite state machine.
+ * SubQuery plays a role in controlling an ExecutionBlock and is a finite state
+ * machine.
  */
 public class SubQuery implements EventHandler<SubQueryEvent> {
 
@@ -87,51 +106,40 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   volatile Map<ContainerId, Container> containers = new ConcurrentHashMap<ContainerId, Container>();
 
   private static ContainerLaunchTransition CONTAINER_LAUNCH_TRANSITION = new ContainerLaunchTransition();
-  private StateMachine<SubQueryState, SubQueryEventType, SubQueryEvent>
-      stateMachine;
+  private StateMachine<SubQueryState, SubQueryEventType, SubQueryEvent> stateMachine;
 
-  private StateMachineFactory<SubQuery, SubQueryState,
-      SubQueryEventType, SubQueryEvent> stateMachineFactory =
-      new StateMachineFactory <SubQuery, SubQueryState,
-          SubQueryEventType, SubQueryEvent> (SubQueryState.NEW)
+  private StateMachineFactory<SubQuery, SubQueryState, SubQueryEventType, SubQueryEvent> stateMachineFactory = new StateMachineFactory<SubQuery, SubQueryState, SubQueryEventType, SubQueryEvent>(
+      SubQueryState.NEW)
 
-          .addTransition(SubQueryState.NEW,
-              EnumSet.of(SubQueryState.INIT, SubQueryState.FAILED, SubQueryState.SUCCEEDED),
-              SubQueryEventType.SQ_INIT, new InitAndRequestContainer())
+      .addTransition(SubQueryState.NEW, EnumSet.of(SubQueryState.INIT, SubQueryState.FAILED, SubQueryState.SUCCEEDED),
+          SubQueryEventType.SQ_INIT, new InitAndRequestContainer())
 
-          .addTransition(SubQueryState.INIT, SubQueryState.CONTAINER_ALLOCATED,
-              SubQueryEventType.SQ_CONTAINER_ALLOCATED, CONTAINER_LAUNCH_TRANSITION)
+      .addTransition(SubQueryState.INIT, SubQueryState.CONTAINER_ALLOCATED, SubQueryEventType.SQ_CONTAINER_ALLOCATED,
+          CONTAINER_LAUNCH_TRANSITION)
 
-          .addTransition(SubQueryState.CONTAINER_ALLOCATED,
-              EnumSet.of(SubQueryState.RUNNING, SubQueryState.FAILED,
-                  SubQueryState.SUCCEEDED), SubQueryEventType.SQ_START, new StartTransition())
-          .addTransition(SubQueryState.CONTAINER_ALLOCATED, SubQueryState.CONTAINER_ALLOCATED,
-              SubQueryEventType.SQ_CONTAINER_ALLOCATED, CONTAINER_LAUNCH_TRANSITION)
+      .addTransition(SubQueryState.CONTAINER_ALLOCATED,
+          EnumSet.of(SubQueryState.RUNNING, SubQueryState.FAILED, SubQueryState.SUCCEEDED), SubQueryEventType.SQ_START,
+          new StartTransition())
+      .addTransition(SubQueryState.CONTAINER_ALLOCATED, SubQueryState.CONTAINER_ALLOCATED,
+          SubQueryEventType.SQ_CONTAINER_ALLOCATED, CONTAINER_LAUNCH_TRANSITION)
 
-          .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING,
-              SubQueryEventType.SQ_CONTAINER_ALLOCATED, CONTAINER_LAUNCH_TRANSITION)
-          .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING, SubQueryEventType.SQ_START)
-          .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING,
-              SubQueryEventType.SQ_TASK_COMPLETED, new TaskCompletedTransition())
-          .addTransition(SubQueryState.RUNNING, SubQueryState.SUCCEEDED,
-              SubQueryEventType.SQ_SUBQUERY_COMPLETED, new SubQueryCompleteTransition())
-          .addTransition(SubQueryState.RUNNING, SubQueryState.FAILED,
-              SubQueryEventType.SQ_FAILED, new InternalErrorTransition())
+      .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING, SubQueryEventType.SQ_CONTAINER_ALLOCATED,
+          CONTAINER_LAUNCH_TRANSITION)
+      .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING, SubQueryEventType.SQ_START)
+      .addTransition(SubQueryState.RUNNING, SubQueryState.RUNNING, SubQueryEventType.SQ_TASK_COMPLETED,
+          new TaskCompletedTransition())
+      .addTransition(SubQueryState.RUNNING, SubQueryState.SUCCEEDED, SubQueryEventType.SQ_SUBQUERY_COMPLETED,
+          new SubQueryCompleteTransition())
+      .addTransition(SubQueryState.RUNNING, SubQueryState.FAILED, SubQueryEventType.SQ_FAILED,
+          new InternalErrorTransition())
 
-          .addTransition(SubQueryState.SUCCEEDED, SubQueryState.SUCCEEDED,
-              SubQueryEventType.SQ_START)
-          .addTransition(SubQueryState.SUCCEEDED, SubQueryState.SUCCEEDED,
-              SubQueryEventType.SQ_CONTAINER_ALLOCATED)
+      .addTransition(SubQueryState.SUCCEEDED, SubQueryState.SUCCEEDED, SubQueryEventType.SQ_START)
+      .addTransition(SubQueryState.SUCCEEDED, SubQueryState.SUCCEEDED, SubQueryEventType.SQ_CONTAINER_ALLOCATED)
 
-          .addTransition(SubQueryState.FAILED, SubQueryState.FAILED,
-              SubQueryEventType.SQ_START)
-          .addTransition(SubQueryState.FAILED, SubQueryState.FAILED,
-              SubQueryEventType.SQ_CONTAINER_ALLOCATED)
-          .addTransition(SubQueryState.FAILED, SubQueryState.FAILED,
-                 SubQueryEventType.SQ_FAILED)
-          .addTransition(SubQueryState.FAILED, SubQueryState.FAILED,
-              SubQueryEventType.SQ_INTERNAL_ERROR);
-
+      .addTransition(SubQueryState.FAILED, SubQueryState.FAILED, SubQueryEventType.SQ_START)
+      .addTransition(SubQueryState.FAILED, SubQueryState.FAILED, SubQueryEventType.SQ_CONTAINER_ALLOCATED)
+      .addTransition(SubQueryState.FAILED, SubQueryState.FAILED, SubQueryEventType.SQ_FAILED)
+      .addTransition(SubQueryState.FAILED, SubQueryState.FAILED, SubQueryEventType.SQ_INTERNAL_ERROR);
 
   private final Lock readLock;
   private final Lock writeLock;
@@ -151,8 +159,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   }
 
   public static boolean isRunningState(SubQueryState state) {
-    return state == SubQueryState.INIT || state == SubQueryState.NEW ||
-        state == SubQueryState.CONTAINER_ALLOCATED || state == SubQueryState.RUNNING;
+    return state == SubQueryState.INIT || state == SubQueryState.NEW || state == SubQueryState.CONTAINER_ALLOCATED
+        || state == SubQueryState.RUNNING;
   }
 
   public QueryMasterTask.QueryContext getContext() {
@@ -194,7 +202,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         if (completedTaskCount == 0) {
           return 0.0f;
         } else {
-          return (float)completedTaskCount / (float)tasks.size();
+          return (float) completedTaskCount / (float) tasks.size();
         }
       }
     } finally {
@@ -228,7 +236,6 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     this.priority = priority;
   }
 
-
   public int getPriority() {
     return this.priority;
   }
@@ -236,19 +243,19 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   public StorageManager getStorageManager() {
     return sm;
   }
-  
+
   public SubQuery getChildQuery(ScanNode scanForChild) {
     return context.getSubQuery(block.getChildBlock(scanForChild).getId());
   }
-  
+
   public ExecutionBlockId getId() {
     return block.getId();
   }
-  
+
   public QueryUnit[] getQueryUnits() {
     return tasks.values().toArray(new QueryUnit[tasks.size()]);
   }
-  
+
   public QueryUnit getQueryUnit(QueryUnitId qid) {
     return tasks.get(qid);
   }
@@ -271,21 +278,21 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     sb.append(this.getId());
     return sb.toString();
   }
-  
+
   @Override
   public boolean equals(Object o) {
     if (o instanceof SubQuery) {
-      SubQuery other = (SubQuery)o;
+      SubQuery other = (SubQuery) o;
       return getId().equals(other.getId());
     }
     return false;
   }
-  
+
   @Override
   public int hashCode() {
     return getId().hashCode();
   }
-  
+
   public int compareTo(SubQuery other) {
     return getId().compareTo(other.getId());
   }
@@ -352,8 +359,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     return tableStat;
   }
 
-  private TableMeta writeStat(SubQuery subQuery, TableStat stat)
-      throws IOException {
+  private TableMeta writeStat(SubQuery subQuery, TableStat stat) throws IOException {
     ExecutionBlock execBlock = subQuery.getBlock();
     StoreTableNode storeTableNode = execBlock.getStoreTableNode();
     TableMeta meta = toTableMeta(storeTableNode);
@@ -364,11 +370,9 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   private static TableMeta toTableMeta(StoreTableNode store) {
     if (store.hasOptions()) {
-      return CatalogUtil.newTableMeta(store.getOutSchema(),
-          store.getStorageType(), store.getOptions());
+      return CatalogUtil.newTableMeta(store.getOutSchema(), store.getStorageType(), store.getOptions());
     } else {
-      return CatalogUtil.newTableMeta(store.getOutSchema(),
-          store.getStorageType());
+      return CatalogUtil.newTableMeta(store.getOutSchema(), store.getStorageType());
     }
   }
 
@@ -382,8 +386,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   private void releaseContainers() {
     // If there are still live TaskRunners, try to kill the containers.
-    eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP ,getId(),
-        containers.values()));
+    eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP, getId(), containers.values()));
   }
 
   private void finish() {
@@ -412,15 +415,13 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         getStateMachine().doTransition(event.getType(), event);
       } catch (InvalidStateTransitonException e) {
         LOG.error("Can't handle this event at current state", e);
-        eventHandler.handle(new SubQueryEvent(getId(),
-            SubQueryEventType.SQ_INTERNAL_ERROR));
+        eventHandler.handle(new SubQueryEvent(getId(), SubQueryEventType.SQ_INTERNAL_ERROR));
       }
 
       // notify the eventhandler of state change
       if (LOG.isDebugEnabled()) {
         if (oldState != getState()) {
-          LOG.debug(getId() + " SubQuery Transitioned from " + oldState + " to "
-              + getState());
+          LOG.debug(getId() + " SubQuery Transitioned from " + oldState + " to " + getState());
         }
       }
     } finally {
@@ -432,8 +433,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     taskScheduler.handleTaskRequestEvent(event);
   }
 
-  private static class InitAndRequestContainer implements MultipleArcTransition<SubQuery,
-      SubQueryEvent, SubQueryState> {
+  private static class InitAndRequestContainer implements MultipleArcTransition<SubQuery, SubQueryEvent, SubQueryState> {
 
     @Override
     public SubQueryState transition(SubQuery subQuery, SubQueryEvent subQueryEvent) {
@@ -442,7 +442,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       SubQueryState state;
 
       try {
-        // Union operator does not require actual query processing. It is performed logically.
+        // Union operator does not require actual query processing. It is
+        // performed logically.
         if (execBlock.hasUnion()) {
           subQuery.finish();
           state = SubQueryState.SUCCEEDED;
@@ -461,10 +462,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         }
       } catch (Exception e) {
         LOG.warn("SubQuery (" + subQuery.getId() + ") failed", e);
-        subQuery.eventHandler.handle(
-            new QueryDiagnosticsUpdateEvent(subQuery.getId().getQueryId(), e.getMessage()));
-        subQuery.eventHandler.handle(
-            new SubQueryCompletedEvent(subQuery.getId(), SubQueryState.FAILED));
+        subQuery.eventHandler.handle(new QueryDiagnosticsUpdateEvent(subQuery.getId().getQueryId(), e.getMessage()));
+        subQuery.eventHandler.handle(new SubQueryCompletedEvent(subQuery.getId(), SubQueryState.FAILED));
         return SubQueryState.FAILED;
       }
 
@@ -478,8 +477,9 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
 
     /**
-     * If a parent block requires a repartition operation, the method sets proper repartition
-     * methods and the number of partitions to a given subquery.
+     * If a parent block requires a repartition operation, the method sets
+     * proper repartition methods and the number of partitions to a given
+     * subquery.
      */
     private static void setRepartitionIfNecessary(SubQuery subQuery) {
       if (subQuery.getBlock().hasParentBlock()) {
@@ -489,9 +489,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
 
     /**
-     * Getting the desire number of partitions according to the volume of input data.
-     * This method is only used to determine the partition key number of hash join or aggregation.
-     *
+     * Getting the desire number of partitions according to the volume of input
+     * data. This method is only used to determine the partition key number of
+     * hash join or aggregation.
+     * 
      * @param subQuery
      * @return
      */
@@ -501,8 +502,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
       GroupbyNode grpNode = null;
       if (parent != null) {
-        grpNode = (GroupbyNode) PlannerUtil.findTopNode(
-            parent.getPlan(), NodeType.GROUP_BY);
+        grpNode = (GroupbyNode) PlannerUtil.findTopNode(parent.getPlan(), NodeType.GROUP_BY);
       }
 
       // Is this subquery the first step of join?
@@ -516,16 +516,15 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         // for inner
         ExecutionBlock inner = child.next();
         long innerVolume = getInputVolume(subQuery.context, inner);
-        LOG.info("Outer volume: " + Math.ceil((double)outerVolume / 1048576));
-        LOG.info("Inner volume: " + Math.ceil((double)innerVolume / 1048576));
+        LOG.info("Outer volume: " + Math.ceil((double) outerVolume / 1048576));
+        LOG.info("Inner volume: " + Math.ceil((double) innerVolume / 1048576));
 
         long smaller = Math.min(outerVolume, innerVolume);
 
-        int mb = (int) Math.ceil((double)smaller / 1048576);
+        int mb = (int) Math.ceil((double) smaller / 1048576);
         LOG.info("Smaller Table's volume is approximately " + mb + " MB");
         // determine the number of task
-        int taskNum = (int) Math.ceil((double)mb /
-            conf.getIntVar(ConfVars.JOIN_PARTITION_VOLUME));
+        int taskNum = (int) Math.ceil((double) mb / conf.getIntVar(ConfVars.JOIN_PARTITION_VOLUME));
         LOG.info("The determined number of join partitions is " + taskNum);
         return taskNum;
 
@@ -537,11 +536,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         } else {
           long volume = getInputVolume(subQuery.context, subQuery.block);
 
-          int mb = (int) Math.ceil((double)volume / 1048576);
+          int mb = (int) Math.ceil((double) volume / 1048576);
           LOG.info("Table's volume is approximately " + mb + " MB");
           // determine the number of task
-          int taskNum = (int) Math.ceil((double)mb /
-              conf.getIntVar(ConfVars.AGGREGATION_PARTITION_VOLUME));
+          int taskNum = (int) Math.ceil((double) mb / conf.getIntVar(ConfVars.AGGREGATION_PARTITION_VOLUME));
           LOG.info("The determined number of aggregation partitions is " + taskNum);
           return taskNum;
         }
@@ -549,10 +547,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         LOG.info("============>>>>> Unexpected Case! <<<<<================");
         long volume = getInputVolume(subQuery.context, subQuery.block);
 
-        int mb = (int) Math.ceil((double)volume / 1048576);
+        int mb = (int) Math.ceil((double) volume / 1048576);
         LOG.info("Table's volume is approximately " + mb + " MB");
         // determine the number of task per 128MB
-        int taskNum = (int) Math.ceil((double)mb / 128);
+        int taskNum = (int) Math.ceil((double) mb / 128);
         LOG.info("The determined number of partitions is " + taskNum);
         return taskNum;
       }
@@ -560,8 +558,11 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
     private static void createTasks(SubQuery subQuery) throws IOException {
       ExecutionBlock execBlock = subQuery.getBlock();
-      QueryUnit [] tasks;
-      if (execBlock.isLeafBlock() && execBlock.getScanNodes().length == 1) { // Case 1: Just Scan
+      QueryUnit[] tasks;
+      if (execBlock.isLeafBlock() && execBlock.getScanNodes().length == 1) { // Case
+                                                                             // 1:
+                                                                             // Just
+                                                                             // Scan
         tasks = createLeafTasks(subQuery);
 
       } else if (execBlock.getScanNodes().length > 1) { // Case 2: Join
@@ -583,7 +584,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
     /**
      * Getting the desire number of tasks according to the volume of input data
-     *
+     * 
      * @param subQuery
      * @return
      */
@@ -591,10 +592,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       // Getting intermediate data size
       long volume = getInputVolume(subQuery.context, subQuery.getBlock());
 
-      int mb = (int) Math.ceil((double)volume / 1048576);
+      int mb = (int) Math.ceil((double) volume / 1048576);
       LOG.info("Table's volume is approximately " + mb + " MB");
       // determine the number of task per 64MB
-      int maxTaskNum = (int) Math.ceil((double)mb / 64);
+      int maxTaskNum = (int) Math.ceil((double) mb / 64);
       LOG.info("The determined number of non-leaf tasks is " + maxTaskNum);
       return maxTaskNum;
     }
@@ -618,11 +619,12 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
     public static void allocateContainers(SubQuery subQuery) {
       ExecutionBlock execBlock = subQuery.getBlock();
-      QueryUnit [] tasks = subQuery.getQueryUnits();
+      QueryUnit[] tasks = subQuery.getQueryUnits();
 
-      int numRequest = subQuery.getContext().getResourceAllocator().calculateNumRequestContainers(
-          subQuery.getContext().getQueryMasterContext().getWorkerContext(), tasks.length
-      );
+      int numRequest = subQuery
+          .getContext()
+          .getResourceAllocator()
+          .calculateNumRequestContainers(subQuery.getContext().getQueryMasterContext().getWorkerContext(), tasks.length);
 
       final Resource resource = Records.newRecord(Resource.class);
 
@@ -632,14 +634,12 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
       Priority priority = Records.newRecord(Priority.class);
       priority.setPriority(subQuery.getPriority());
-      ContainerAllocationEvent event =
-          new ContainerAllocationEvent(ContainerAllocatorEventType.CONTAINER_REQ,
-              subQuery.getId(), priority, resource, numRequest,
-              execBlock.isLeafBlock(), 0.0f);
+      ContainerAllocationEvent event = new ContainerAllocationEvent(ContainerAllocatorEventType.CONTAINER_REQ,
+          subQuery.getId(), priority, resource, numRequest, execBlock.isLeafBlock(), 0.0f);
       subQuery.eventHandler.handle(event);
     }
 
-    private static QueryUnit [] createLeafTasks(SubQuery subQuery) throws IOException {
+    private static QueryUnit[] createLeafTasks(SubQuery subQuery) throws IOException {
       ExecutionBlock execBlock = subQuery.getBlock();
       ScanNode[] scans = execBlock.getScanNodes();
       Preconditions.checkArgument(scans.length == 1, "Must be Scan Query");
@@ -673,8 +673,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
     private static QueryUnit newQueryUnit(SubQuery subQuery, int taskId, Fragment fragment) {
       ExecutionBlock execBlock = subQuery.getBlock();
-      QueryUnit unit = new QueryUnit(
-          QueryIdFactory.newQueryUnitId(subQuery.getId(), taskId), execBlock.isLeafBlock(),
+      QueryUnit unit = new QueryUnit(QueryIdFactory.newQueryUnitId(subQuery.getId(), taskId), execBlock.isLeafBlock(),
           subQuery.eventHandler);
       unit.setLogicalPlan(execBlock.getPlan());
       unit.setFragment2(fragment);
@@ -683,13 +682,12 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   }
 
   int i = 0;
-  private static class ContainerLaunchTransition
-      implements SingleArcTransition<SubQuery, SubQueryEvent> {
+
+  private static class ContainerLaunchTransition implements SingleArcTransition<SubQuery, SubQueryEvent> {
 
     @Override
     public void transition(SubQuery subQuery, SubQueryEvent event) {
-      SubQueryContainerAllocationEvent allocationEvent =
-          (SubQueryContainerAllocationEvent) event;
+      SubQueryContainerAllocationEvent allocationEvent = (SubQueryContainerAllocationEvent) event;
       for (Container container : allocationEvent.getAllocatedContainer()) {
         ContainerId cId = container.getId();
         if (subQuery.containers.containsKey(cId)) {
@@ -700,27 +698,24 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         subQuery.i++;
       }
       LOG.info("SubQuery (" + subQuery.getId() + ") has " + subQuery.i + " containers!");
-      subQuery.eventHandler.handle(
-          new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH,
-              subQuery.getId(), allocationEvent.getAllocatedContainer()));
+      subQuery.eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH, subQuery.getId(),
+          allocationEvent.getAllocatedContainer()));
 
       subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_START));
     }
   }
 
-  private static class StartTransition implements
-      MultipleArcTransition<SubQuery, SubQueryEvent, SubQueryState> {
+  private static class StartTransition implements MultipleArcTransition<SubQuery, SubQueryEvent, SubQueryState> {
 
     @Override
-    public SubQueryState transition(SubQuery subQuery,
-                           SubQueryEvent subQueryEvent) {
+    public SubQueryState transition(SubQuery subQuery, SubQueryEvent subQueryEvent) {
       // schedule tasks
       try {
         for (QueryUnitId taskId : subQuery.tasks.keySet()) {
           subQuery.eventHandler.handle(new TaskEvent(taskId, TaskEventType.T_SCHEDULE));
         }
 
-        return  SubQueryState.RUNNING;
+        return SubQueryState.RUNNING;
       } catch (Exception e) {
         LOG.warn("SubQuery (" + subQuery.getId() + ") failed", e);
         return SubQueryState.FAILED;
@@ -728,27 +723,23 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
   }
 
-  private static class TaskCompletedTransition
-      implements SingleArcTransition<SubQuery, SubQueryEvent> {
+  private static class TaskCompletedTransition implements SingleArcTransition<SubQuery, SubQueryEvent> {
 
     @Override
-    public void transition(SubQuery subQuery,
-                                     SubQueryEvent event) {
+    public void transition(SubQuery subQuery, SubQueryEvent event) {
       subQuery.completedTaskCount++;
       SubQueryTaskEvent taskEvent = (SubQueryTaskEvent) event;
       QueryUnitAttempt task = subQuery.getQueryUnit(taskEvent.getTaskId()).getSuccessfulAttempt();
 
-      LOG.info(subQuery.getId() + " SubQuery Succeeded " + subQuery.completedTaskCount + "/"
-          + subQuery.tasks.size() + " on " + task.getHost() + ":" + task.getPort());
+      LOG.info(subQuery.getId() + " SubQuery Succeeded " + subQuery.completedTaskCount + "/" + subQuery.tasks.size()
+          + " on " + task.getHost() + ":" + task.getPort());
       if (subQuery.completedTaskCount == subQuery.tasks.size()) {
-        subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(),
-            SubQueryEventType.SQ_SUBQUERY_COMPLETED));
+        subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_SUBQUERY_COMPLETED));
       }
     }
   }
 
-  private static class SubQueryCompleteTransition
-      implements SingleArcTransition<SubQuery, SubQueryEvent> {
+  private static class SubQueryCompleteTransition implements SingleArcTransition<SubQuery, SubQueryEvent> {
 
     @Override
     public void transition(SubQuery subQuery, SubQueryEvent subQueryEvent) {
@@ -762,12 +753,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
   }
 
-  private static class InternalErrorTransition
-      implements SingleArcTransition<SubQuery, SubQueryEvent> {
+  private static class InternalErrorTransition implements SingleArcTransition<SubQuery, SubQueryEvent> {
 
     @Override
-    public void transition(SubQuery subQuery,
-                           SubQueryEvent subQueryEvent) {
+    public void transition(SubQuery subQuery, SubQueryEvent subQueryEvent) {
 
     }
   }
