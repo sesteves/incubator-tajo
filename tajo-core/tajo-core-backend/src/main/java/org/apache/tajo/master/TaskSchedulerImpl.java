@@ -529,9 +529,11 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
 
           ExecutionBlock executionBlock = context.getSubQuery(attemptId.getQueryUnitId().getExecutionBlockId())
               .getBlock();
-          if (executionBlock.hasJoin()
-              && ((JoinNode) ((UnaryNode) executionBlock.getPlan()).getChild()).getJoinType() == JoinType.INNER) {
-            taskAssign.setHistogram(executionBlock.getHistogram());
+          if (executionBlock.hasJoin()) {
+            LogicalNode child = ((UnaryNode) executionBlock.getPlan()).getChild();
+            if (child instanceof JoinNode && ((JoinNode) child).getJoinType() == JoinType.INNER) {
+              taskAssign.setHistogram(executionBlock.getHistogram());
+            }
           }
 
           if (task.getStoreTableNode().isLocal()) {
