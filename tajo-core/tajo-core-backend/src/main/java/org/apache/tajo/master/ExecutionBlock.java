@@ -108,8 +108,11 @@ public class ExecutionBlock {
         if (binary.getType() == NodeType.JOIN) {
           hasJoinPlan = true;
           JoinNode joinNode = (JoinNode) node;
-          joinKeyPairs = PlannerUtil.getJoinKeyPairs(joinNode.getJoinQual(), joinNode.getLeftChild().getOutSchema(),
-              joinNode.getRightChild().getOutSchema());
+
+          if (joinNode.getJoinQual() != null) {
+            joinKeyPairs = PlannerUtil.getJoinKeyPairs(joinNode.getJoinQual(), joinNode.getLeftChild().getOutSchema(),
+                joinNode.getRightChild().getOutSchema());
+          }
         } else if (binary.getType() == NodeType.UNION) {
           hasUnionPlan = true;
         }

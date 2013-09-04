@@ -190,7 +190,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       long outerSize = estimateSizeRecursive(ctx, outerLineage);
       long innerSize = estimateSizeRecursive(ctx, innerLineage);
 
-      if (ctx.getHistogram() != null) {
+      if (ctx.getHistogram() != null && ctx.getHistogram().size() > 0) {
         PhysicalExec selectedOuter;
         PhysicalExec selectedInner;
         if (outerSize <= innerSize) {

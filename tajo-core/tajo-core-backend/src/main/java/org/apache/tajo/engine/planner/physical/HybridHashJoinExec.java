@@ -137,9 +137,11 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private void partitionHistogram() throws IOException {
     Map<Integer, Long> histogram = context.getHistogram();
-    if (histogram == null) {
-      throw new IOException("HybridHashJoinExec needs a histogram of the inner relation join keys!");
-    }
+    // planner will never choose HHJ if there is no histogram
+    // if (histogram == null) {
+    // throw new IOException(
+    // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
+    // }
 
     int lastKey = -1;
     long accumulated = 0;
@@ -388,6 +390,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
         return bucketsMap.get(key);
       }
     }
+    System.out.println("### RETURNED NULL ###");
     return null;
   }
 
@@ -454,7 +457,9 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       innerAppender.close();
       outerAppender.close();
       innerScanner = StorageManager.getScanner(context.getConf(), innerTableMeta, innerPath);
+      innerScanner.init();
       outerScanner = StorageManager.getScanner(context.getConf(), outerTableMeta, outerPath);
+      outerScanner.init();
     }
 
     public long getSize() {

@@ -57,110 +57,110 @@ public class TableStatistics {
   private int keyTupleIdx = 0;
 
   public TableStatistics(Schema schema) {
-	this.schema = schema;
-	minValues = new VTuple(schema.getColumnNum());
-	maxValues = new VTuple(schema.getColumnNum());
-	/*
-	 * for (int i = 0; i < schema.getColumnNum(); i++) { minValues[i] =
-	 * Long.MAX_VALUE; maxValues[i] = Long.MIN_VALUE; }
-	 */
+    this.schema = schema;
+    minValues = new VTuple(schema.getColumnNum());
+    maxValues = new VTuple(schema.getColumnNum());
+    /*
+     * for (int i = 0; i < schema.getColumnNum(); i++) { minValues[i] =
+     * Long.MAX_VALUE; maxValues[i] = Long.MIN_VALUE; }
+     */
 
-	numNulls = new long[schema.getColumnNum()];
-	comparable = new boolean[schema.getColumnNum()];
+    numNulls = new long[schema.getColumnNum()];
+    comparable = new boolean[schema.getColumnNum()];
 
-	DataType type;
-	for (int i = 0; i < schema.getColumnNum(); i++) {
-	  type = schema.getColumn(i).getDataType();
-	  if (type.getType() == Type.ARRAY) {
-		comparable[i] = false;
-	  } else {
-		comparable[i] = true;
-	  }
-	}
+    DataType type;
+    for (int i = 0; i < schema.getColumnNum(); i++) {
+      type = schema.getColumn(i).getDataType();
+      if (type.getType() == Type.ARRAY) {
+        comparable[i] = false;
+      } else {
+        comparable[i] = true;
+      }
+    }
   }
 
   public Schema getSchema() {
-	return this.schema;
+    return this.schema;
   }
 
   public void incrementRow() {
-	numRows++;
+    numRows++;
   }
 
   public long getNumRows() {
-	return this.numRows;
+    return this.numRows;
   }
 
   public void setNumBytes(long bytes) {
-	this.numBytes = bytes;
+    this.numBytes = bytes;
   }
 
   public long getNumBytes() {
-	return this.numBytes;
+    return this.numBytes;
   }
 
   public void analyzeField(int idx, Datum datum) {
-	if (datum instanceof NullDatum) {
-	  numNulls[idx]++;
-	  return;
-	}
+    if (datum instanceof NullDatum) {
+      numNulls[idx]++;
+      return;
+    }
 
-	if (datum.type() != TajoDataTypes.Type.ARRAY) {
-	  if (comparable[idx]) {
-		if (!maxValues.contains(idx) || maxValues.get(idx).compareTo(datum) < 0) {
-		  maxValues.put(idx, datum);
-		}
-		if (!minValues.contains(idx) || minValues.get(idx).compareTo(datum) > 0) {
-		  minValues.put(idx, datum);
-		}
-	  }
-	}
+    if (datum.type() != TajoDataTypes.Type.ARRAY) {
+      if (comparable[idx]) {
+        if (!maxValues.contains(idx) || maxValues.get(idx).compareTo(datum) < 0) {
+          maxValues.put(idx, datum);
+        }
+        if (!minValues.contains(idx) || minValues.get(idx).compareTo(datum) > 0) {
+          minValues.put(idx, datum);
+        }
+      }
+    }
 
-	tupleSize += datum.size();
-	if (joinKeys != null) {
-	  if (joinKeys.contains(idx)) {
-		keyTuple.put(keyTupleIdx++, datum);
-	  }
+    tupleSize += datum.size();
+    if (joinKeys != null) {
+      if (joinKeys.contains(idx)) {
+        keyTuple.put(keyTupleIdx++, datum);
+      }
 
-	  if (idx == schema.getColumnNum() - 1) {
-		int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
+      if (idx == schema.getColumnNum() - 1) {
+        int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
 
-		Long accumulated = histogram.get(key);
-		if (accumulated != null) {
-		  histogram.put(key, accumulated + tupleSize);
-		} else {
-		  histogram.put(key, tupleSize);
-		}
+        Long accumulated = histogram.get(key);
+        if (accumulated != null) {
+          histogram.put(key, accumulated + tupleSize);
+        } else {
+          histogram.put(key, tupleSize);
+        }
 
-		keyTupleIdx = 0;
-		keyTuple.clear();
-		tupleSize = 0;
-	  }
-	}
+        keyTupleIdx = 0;
+        keyTuple.clear();
+        tupleSize = 0;
+      }
+    }
   }
 
   public TableStat getTableStat() {
-	TableStat stat = new TableStat();
+    TableStat stat = new TableStat();
 
-	ColumnStat columnStat;
-	for (int i = 0; i < schema.getColumnNum(); i++) {
-	  columnStat = new ColumnStat(schema.getColumn(i));
-	  columnStat.setNumNulls(numNulls[i]);
-	  columnStat.setMinValue(minValues.get(i));
-	  columnStat.setMaxValue(maxValues.get(i));
-	  stat.addColumnStat(columnStat);
-	}
+    ColumnStat columnStat;
+    for (int i = 0; i < schema.getColumnNum(); i++) {
+      columnStat = new ColumnStat(schema.getColumn(i));
+      columnStat.setNumNulls(numNulls[i]);
+      columnStat.setMinValue(minValues.get(i));
+      columnStat.setMaxValue(maxValues.get(i));
+      stat.addColumnStat(columnStat);
+    }
 
-	stat.setNumRows(this.numRows);
-	stat.setNumBytes(this.numBytes);
-	stat.setHistogram(this.histogram);
+    stat.setNumRows(this.numRows);
+    stat.setNumBytes(this.numBytes);
+    stat.setHistogram(this.histogram);
 
-	return stat;
+    return stat;
   }
 
   public void setJoinKeys(List<Integer> joinKeys) {
-	this.joinKeys = joinKeys;
-	keyTuple = new VTuple(joinKeys.size());
-	histogram = new TreeMap<Integer, Long>();
+    this.joinKeys = joinKeys;
+    keyTuple = new VTuple(joinKeys.size());
+    histogram = new TreeMap<Integer, Long>();
   }
 }
