@@ -51,18 +51,6 @@ import org.apache.tajo.util.TUtil;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-icalPlannerImpl;
-import org.apache.tajo.engine.planner.logical.LogicalNode;
-import org.apache.tajo.storage.Appender;
-import org.apache.tajo.storage.Fragment;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.storage.VTuple;
-import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.TUtil;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
 
 public class TestNLJoinExec {
   private TajoConf conf;
