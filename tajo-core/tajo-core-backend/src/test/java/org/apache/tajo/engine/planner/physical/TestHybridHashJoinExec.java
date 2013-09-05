@@ -44,6 +44,7 @@ import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
+import org.apache.tajo.engine.planner.PlanningException;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.storage.Appender;
 import org.apache.tajo.storage.Fragment;
@@ -138,7 +139,7 @@ public class TestHybridHashJoinExec {
   String[] QUERIES = { "select managerId, e.empId, deptName, e.memId from employee as e inner join "
       + "people as p on e.empId = p.empId and e.memId = p.fk_memId" };
 
-  private PhysicalExec getPhysicalExec(int histogramGranularity) throws IOException {
+  private PhysicalExec getPhysicalExec(int histogramGranularity) throws IOException, PlanningException {
     Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
         Integer.MAX_VALUE);
     Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
@@ -177,7 +178,7 @@ public class TestHybridHashJoinExec {
   }
 
   @Test
-  public final void testBucketZero() throws IOException {
+  public final void testBucketZero() throws PlanningException, IOException {
     PhysicalExec exec = getPhysicalExec(100);
     Tuple tuple;
     int count = 0;
@@ -196,7 +197,7 @@ public class TestHybridHashJoinExec {
   }
 
   @Test
-  public final void testBucketPartition() throws IOException {
+  public final void testBucketPartition() throws IOException, PlanningException {
     PhysicalExec exec = getPhysicalExec(100);
 
     ProjectionExec proj = (ProjectionExec) exec;
@@ -219,7 +220,7 @@ public class TestHybridHashJoinExec {
   }
 
   @Test
-  public final void testBucketOverflow() throws IOException {
+  public final void testBucketOverflow() throws IOException, PlanningException {
     PhysicalExec exec = getPhysicalExec(66000);
 
     ProjectionExec proj = (ProjectionExec) exec;

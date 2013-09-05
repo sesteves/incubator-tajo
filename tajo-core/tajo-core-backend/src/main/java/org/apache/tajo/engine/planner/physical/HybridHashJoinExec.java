@@ -133,8 +133,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     outTuple = new VTuple(outSchema.getColumnNum());
     outerKeyTuple = new VTuple(outerKeyList.length);
 
-    innerTableMeta = CatalogUtil.newTableMeta(innerChild.outSchema, StoreType.CSV);
-    outerTableMeta = CatalogUtil.newTableMeta(outerChild.outSchema, StoreType.CSV);
+    innerTableMeta = CatalogUtil.newTableMeta(rightChild.outSchema, StoreType.CSV);
+    outerTableMeta = CatalogUtil.newTableMeta(leftChild.outSchema, StoreType.CSV);
   }
 
   private void partitionHistogram() throws IOException {
@@ -299,7 +299,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     Bucket bucket = null;
     Tuple innerKeyTuple;
 
-    while ((tuple = innerChild.next()) != null) {
+    while ((tuple = rightChild.next()) != null) {
       innerKeyTuple = getKeyTuple(tuple, true);
       buckets = getBuckets(innerKeyTuple.hashCode());
       if (buckets.size() == 1) {
@@ -347,7 +347,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
     while (!foundMatch) {
       // getting new outer tuple
-      outerTuple = outerChild.next();
+      outerTuple = leftChild.next();
       if (outerTuple == null) {
         return null;
       }

@@ -21,7 +21,8 @@
  */
 package org.apache.tajo.engine.planner;
 
-import com.google.common.base.Preconditions;
+import java.io.IOException;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
@@ -29,15 +30,46 @@ import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.SortSpec;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.engine.planner.logical.*;
-import org.apache.tajo.engine.planner.physical.*;
+import org.apache.tajo.engine.planner.logical.EvalExprNode;
+import org.apache.tajo.engine.planner.logical.GroupbyNode;
+import org.apache.tajo.engine.planner.logical.IndexScanNode;
+import org.apache.tajo.engine.planner.logical.JoinNode;
+import org.apache.tajo.engine.planner.logical.LimitNode;
+import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.LogicalRootNode;
+import org.apache.tajo.engine.planner.logical.ProjectionNode;
+import org.apache.tajo.engine.planner.logical.ScanNode;
+import org.apache.tajo.engine.planner.logical.SelectionNode;
+import org.apache.tajo.engine.planner.logical.SortNode;
+import org.apache.tajo.engine.planner.logical.StoreIndexNode;
+import org.apache.tajo.engine.planner.logical.StoreTableNode;
+import org.apache.tajo.engine.planner.logical.UnionNode;
+import org.apache.tajo.engine.planner.physical.BSTIndexScanExec;
+import org.apache.tajo.engine.planner.physical.EvalExprExec;
+import org.apache.tajo.engine.planner.physical.ExternalSortExec;
+import org.apache.tajo.engine.planner.physical.HashAggregateExec;
+import org.apache.tajo.engine.planner.physical.HybridHashJoinExec;
+import org.apache.tajo.engine.planner.physical.IndexedStoreExec;
+import org.apache.tajo.engine.planner.physical.LimitExec;
+import org.apache.tajo.engine.planner.physical.MergeJoinExec;
+import org.apache.tajo.engine.planner.physical.NLJoinExec;
+import org.apache.tajo.engine.planner.physical.PartitionedStoreExec;
+import org.apache.tajo.engine.planner.physical.PhysicalExec;
+import org.apache.tajo.engine.planner.physical.ProjectionExec;
+import org.apache.tajo.engine.planner.physical.SelectionExec;
+import org.apache.tajo.engine.planner.physical.SeqScanExec;
+import org.apache.tajo.engine.planner.physical.SortAggregateExec;
+import org.apache.tajo.engine.planner.physical.SortExec;
+import org.apache.tajo.engine.planner.physical.StoreTableExec;
+import org.apache.tajo.engine.planner.physical.TunnelExec;
+import org.apache.tajo.engine.planner.physical.UnionExec;
 import org.apache.tajo.exception.InternalException;
 import org.apache.tajo.storage.Fragment;
 import org.apache.tajo.storage.StorageManager;
 import org.apache.tajo.storage.TupleComparator;
 import org.apache.tajo.util.IndexUtil;
 
-import java.io.IOException;
+import com.google.common.base.Preconditions;
 
 public class PhysicalPlannerImpl implements PhysicalPlanner {
   private static final Log LOG = LogFactory.getLog(PhysicalPlannerImpl.class);
@@ -49,8 +81,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     this.sm = sm;
   }
 
-  public PhysicalExec createPlan(final TaskAttemptContext context,
-      final LogicalNode logicalPlan) throws InternalException {
+  public PhysicalExec createPlan(final TaskAttemptContext context, final LogicalNode logicalPlan)
+      throws InternalException {
 
     PhysicalExec plan;
 
@@ -145,19 +177,18 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     return size;
   }
 
-  public PhysicalExec createJoinPlan(TaskAttemptContext ctx, JoinNode joinNode,
-                                     PhysicalExec outer, PhysicalExec inner)
+  public PhysicalExec createJoinPlan(TaskAttemptContext ctx, JoinNode joinNode, PhysicalExec outer, PhysicalExec inner)
       throws IOException {
     switch (joinNode.getJoinType()) {
-      case CROSS:
-        LOG.info("The planner chooses [Nested Loop Join]");
-        return new NLJoinExec(ctx, joinNode, outer, inner);
+    case CROSS:
+      LOG.info("The planner chooses [Nested Loop Join]");
+      return new NLJoinExec(ctx, joinNode, outer, inner);
 
-      case INNER:
-        String [] outerLineage = PlannerUtil.getLineage(joinNode.getLeftChild());
-        String [] innerLineage = PlannerUtil.getLineage(joinNode.getRightChild());
-        long outerSize = estimateSizeRecursive(ctx, outerLineage);
-        long innerSize = estimateSizeRecursive(ctx, innerLineage);
+    case INNER:
+      String[] outerLineage = PlannerUtil.getLineage(joinNode.getLeftChild());
+      String[] innerLineage = PlannerUtil.getLineage(joinNode.getRightChild());
+      long outerSize = estimateSizeRecursive(ctx, outerLineage);
+      long innerSize = estimateSizeRecursive(ctx, innerLineage);
 
       if (ctx.getHistogram() != null && ctx.getHistogram().size() > 0) {
         PhysicalExec selectedOuter;
@@ -217,21 +248,19 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       case HASH:
         return new PartitionedStoreExec(ctx, sm, plan, subOp);
 
-        case RANGE:
-          SortSpec [] sortSpecs = null;
-          if (subOp instanceof SortExec) {
-            sortSpecs = ((SortExec)subOp).getSortSpecs();
-          } else {
-            Column[] columns = plan.getPartitionKeys();
-            SortSpec specs[] = new SortSpec[columns.length];
-            for (int i = 0; i < columns.length; i++) {
-              specs[i] = new SortSpec(columns[i]);
-            }
+      case RANGE:
+        SortSpec[] sortSpecs = null;
+        if (subOp instanceof SortExec) {
+          sortSpecs = ((SortExec) subOp).getSortSpecs();
+        } else {
+          Column[] columns = plan.getPartitionKeys();
+          SortSpec specs[] = new SortSpec[columns.length];
+          for (int i = 0; i < columns.length; i++) {
+            specs[i] = new SortSpec(columns[i]);
           }
         }
 
-          return new IndexedStoreExec(ctx, sm, subOp,
-              plan.getInSchema(), plan.getInSchema(), sortSpecs);
+        return new IndexedStoreExec(ctx, sm, subOp, plan.getInSchema(), plan.getInSchema(), sortSpecs);
       }
     }
     if (plan instanceof StoreIndexNode) {
@@ -241,23 +270,22 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     return new StoreTableExec(ctx, sm, plan, subOp);
   }
 
-  public PhysicalExec createScanPlan(TaskAttemptContext ctx, ScanNode scanNode)
-      throws IOException {
-    Preconditions.checkNotNull(ctx.getTable(scanNode.getTableId()),
-        "Error: There is no table matched to %s", scanNode.getTableId());
+  public PhysicalExec createScanPlan(TaskAttemptContext ctx, ScanNode scanNode) throws IOException {
+    Preconditions.checkNotNull(ctx.getTable(scanNode.getTableId()), "Error: There is no table matched to %s",
+        scanNode.getTableId());
 
     Fragment[] fragments = ctx.getTables(scanNode.getTableId());
     return new SeqScanExec(ctx, sm, scanNode, fragments);
   }
 
-  public PhysicalExec createGroupByPlan(TaskAttemptContext ctx,
-                                        GroupbyNode groupbyNode, PhysicalExec subOp) throws IOException {
+  public PhysicalExec createGroupByPlan(TaskAttemptContext ctx, GroupbyNode groupbyNode, PhysicalExec subOp)
+      throws IOException {
     Column[] grpColumns = groupbyNode.getGroupingColumns();
     if (grpColumns.length == 0) {
       LOG.info("The planner chooses [Hash Aggregation]");
       return new HashAggregateExec(ctx, groupbyNode, subOp);
     } else {
-      String [] outerLineage = PlannerUtil.getLineage(groupbyNode.getChild());
+      String[] outerLineage = PlannerUtil.getLineage(groupbyNode.getChild());
       long estimatedSize = estimateSizeRecursive(ctx, outerLineage);
       final long threshold = conf.getLongVar(TajoConf.ConfVars.HASH_AGGREGATION_THRESHOLD);
 
@@ -275,37 +303,30 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         sortNode.setInSchema(subOp.getSchema());
         sortNode.setOutSchema(subOp.getSchema());
         // SortExec sortExec = new SortExec(sortNode, child);
-        ExternalSortExec sortExec = new ExternalSortExec(ctx, sm, sortNode,
-            subOp);
+        ExternalSortExec sortExec = new ExternalSortExec(ctx, sm, sortNode, subOp);
         LOG.info("The planner chooses [Sort Aggregation]");
         return new SortAggregateExec(ctx, groupbyNode, sortExec);
       }
     }
   }
 
-  public PhysicalExec createSortPlan(TaskAttemptContext ctx, SortNode sortNode,
-                                     PhysicalExec subOp) throws IOException {
+  public PhysicalExec createSortPlan(TaskAttemptContext ctx, SortNode sortNode, PhysicalExec subOp) throws IOException {
     return new ExternalSortExec(ctx, sm, sortNode, subOp);
   }
 
-  public PhysicalExec createIndexScanExec(TaskAttemptContext ctx,
-                                          IndexScanNode annotation)
-      throws IOException {
-    //TODO-general Type Index
-    Preconditions.checkNotNull(ctx.getTable(annotation.getTableId()),
-        "Error: There is no table matched to %s", annotation.getTableId());
+  public PhysicalExec createIndexScanExec(TaskAttemptContext ctx, IndexScanNode annotation) throws IOException {
+    // TODO-general Type Index
+    Preconditions.checkNotNull(ctx.getTable(annotation.getTableId()), "Error: There is no table matched to %s",
+        annotation.getTableId());
 
     Fragment[] fragments = ctx.getTables(annotation.getTableId());
 
-    String indexName = IndexUtil.getIndexNameOfFrag(fragments[0],
-        annotation.getSortKeys());
+    String indexName = IndexUtil.getIndexNameOfFrag(fragments[0], annotation.getSortKeys());
     Path indexPath = new Path(sm.getTablePath(annotation.getTableId()), "index");
 
-    TupleComparator comp = new TupleComparator(annotation.getKeySchema(),
-        annotation.getSortKeys());
-    return new BSTIndexScanExec(ctx, sm, annotation, fragments[0], new Path(
-        indexPath, indexName), annotation.getKeySchema(), comp,
-        annotation.getDatum());
+    TupleComparator comp = new TupleComparator(annotation.getKeySchema(), annotation.getSortKeys());
+    return new BSTIndexScanExec(ctx, sm, annotation, fragments[0], new Path(indexPath, indexName),
+        annotation.getKeySchema(), comp, annotation.getDatum());
 
   }
 }
