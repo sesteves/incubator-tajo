@@ -303,11 +303,13 @@ public class Query implements EventHandler<QueryEvent> {
             }
           }
 
-          if (nextExecutionBlock.hasJoin() && histogramCount == 2) {
-            nextExecutionBlock.setHistogram(histogram);
-            histogramBytes = Long.MAX_VALUE;
-            histogram = null;
-            histogramCount = 0;
+          if (nextExecutionBlock.hasJoin()) {
+            if (histogramCount == 2) {
+              nextExecutionBlock.setHistogram(histogram);
+              histogramBytes = Long.MAX_VALUE;
+              histogram = null;
+              histogramCount = 0;
+            }
           }
 
           nextSubQuery.setPriority(query.priority--);
