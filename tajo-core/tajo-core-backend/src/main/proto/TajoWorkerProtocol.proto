@@ -60,7 +60,8 @@ message QueryUnitRequestProto {
     repeated Fetch fetches = 7;
     optional bool shouldDie = 8;
     repeated int32 joinKeys = 9;
-    repeated KeyValue histogram = 10;        
+    repeated KeyValue histogram = 10; 
+    optional KeyValueSetProto queryMeta = 11;
 }
 /*
 message KeyValue {
@@ -111,7 +112,8 @@ message Partition {
 
 message QueryExecutionRequestProto {
     required QueryIdProto queryId = 1;
-    required StringProto logicalPlanJson = 2;
+    required KeyValueSetProto queryMeta = 2;
+    required StringProto logicalPlanJson = 3;
 }
 
 message GetTaskRequestProto {

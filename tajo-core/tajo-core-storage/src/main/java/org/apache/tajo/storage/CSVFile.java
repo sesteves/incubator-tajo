@@ -27,10 +27,9 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.compress.*;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
@@ -41,12 +40,19 @@ import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.TextDatum;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.storage.compress.CodecPool;
 import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
 import org.apache.tajo.storage.json.StorageGsonHelper;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.Arrays;
 
 public class CSVFile {
   public static final String DELIMITER = "csvfile.delimiter";
   public static final String DELIMITER_DEFAULT = "|";
+  public static final byte LF = '\n';
   private static final Log LOG = LogFactory.getLog(CSVFile.class);
 
   public static class CSVAppender extends FileAppender {
@@ -54,8 +60,14 @@ public class CSVFile {
     private final Schema schema;
     private final FileSystem fs;
     private FSDataOutputStream fos;
+    private DataOutputStream outputStream;
+    private CompressionOutputStream deflateFilter;
     private String delimiter;
     private TableStatistics stats = null;
+    private Compressor compressor;
+    private CompressionCodecFactory codecFactory;
+    private CompressionCodec codec;
+    private Path compressedPath;
 
     public CSVAppender(Configuration conf, final TableMeta meta, final Path path) throws IOException {
       super(conf, meta, path);
@@ -71,11 +83,31 @@ public class CSVFile {
         throw new FileNotFoundException(path.toString());
       }
 
-      if (fs.exists(path)) {
-        throw new AlreadyExistsStorageException(path);
-      }
+      String codecName = this.meta.getOption(TableMeta.COMPRESSION_CODEC);
+      if(!StringUtils.isEmpty(codecName)){
+        codecFactory = new CompressionCodecFactory(conf);
+        codec = codecFactory.getCodecByClassName(codecName);
+        compressor =  CodecPool.getCompressor(codec);
+        if(compressor != null) compressor.reset();  //builtin gzip is null
 
-      fos = fs.create(path);
+        String extension = codec.getDefaultExtension();
+        compressedPath = path.suffix(extension);
+
+        if (fs.exists(compressedPath)) {
+          throw new AlreadyExistsStorageException(compressedPath);
+        }
+
+        fos = fs.create(compressedPath);
+        deflateFilter = codec.createOutputStream(fos, compressor);
+        outputStream = new DataOutputStream(new BufferedOutputStream(deflateFilter));
+
+      } else {
+        if (fs.exists(path)) {
+          throw new AlreadyExistsStorageException(path);
+        }
+        fos = fs.create(path);
+        outputStream = fos;
+      }
 
       if (enabledStats) {
         this.stats = new TableStatistics(this.schema);
@@ -160,8 +192,7 @@ public class CSVFile {
         sb.deleteCharAt(sb.length() - 1);
       }
       sb.append('\n');
-      fos.writeBytes(sb.toString());
-
+      outputStream.write(sb.toString().getBytes());
       // Statistical section
       if (enabledStats) {
         stats.incrementRow();
@@ -175,16 +206,32 @@ public class CSVFile {
 
     @Override
     public void flush() throws IOException {
-      fos.flush();
+      outputStream.flush();
     }
 
     @Override
     public void close() throws IOException {
       // Statistical section
       if (enabledStats) {
-        stats.setNumBytes(fos.getPos());
+        stats.setNumBytes(getOffset());
       }
-      fos.close();
+
+      try {
+        flush();
+
+        if(deflateFilter != null) {
+          deflateFilter.finish();
+          deflateFilter.resetState();
+          deflateFilter = null;
+        }
+
+        fos.close();
+      } finally {
+        if (compressor != null) {
+          CodecPool.returnCompressor(compressor);
+          compressor = null;
+        }
+      }
     }
 
     @Override
@@ -195,20 +242,39 @@ public class CSVFile {
         return null;
       }
     }
+
+    public boolean isCompress() {
+      return compressor != null;
+    }
+
+    public String getExtension() {
+      return codec != null ? codec.getDefaultExtension() : "";
+    }
   }
 
   public static class CSVScanner extends FileScanner implements SeekableScanner {
-    public CSVScanner(Configuration conf, final TableMeta meta, final Fragment fragment) throws IOException {
+    public CSVScanner(Configuration conf, final TableMeta meta,
+                      final Fragment fragment) throws IOException {
       super(conf, meta, fragment);
+      factory = new CompressionCodecFactory(conf);
+      codec = factory.getCodec(fragment.getPath());
+      if (isCompress() && !(codec instanceof SplittableCompressionCodec)) {
+          splittable = false;
+      }
     }
 
-    private static final byte LF = '\n';
-    private final static long DEFAULT_BUFFER_SIZE = 256 * 1024;
-    private long bufSize;
+    private final static int DEFAULT_BUFFER_SIZE = 256 * 1024;
+    private int bufSize;
     private char delimiter;
     private FileSystem fs;
     private FSDataInputStream fis;
-    private long startOffset, length, startPos;
+    private InputStream is; //decompressd stream
+    private CompressionCodecFactory factory;
+    private CompressionCodec codec;
+    private Decompressor decompressor;
+    private Seekable filePosition;
+    private boolean splittable = true;
+    private long startOffset, length;
     private byte[] buf = null;
     private String[] tuples = null;
     private long[] tupleOffsets = null;
@@ -217,22 +283,45 @@ public class CSVFile {
     private long pageStart = -1;
     private long prevTailLen = -1;
     private int[] targetColumnIndexes;
+    private boolean eof = false;
 
     @Override
     public void init() throws IOException {
 
       // Buffer size, Delimiter
       this.bufSize = DEFAULT_BUFFER_SIZE;
-      String delim = fragment.getMeta().getOption(DELIMITER, DELIMITER_DEFAULT);
+      String delim  = fragment.getMeta().getOption(DELIMITER, DELIMITER_DEFAULT);
       this.delimiter = delim.charAt(0);
 
       // Fragment information
-      this.fs = fragment.getPath().getFileSystem(this.conf);
-      this.fis = this.fs.open(fragment.getPath());
-      this.startOffset = fragment.getStartOffset();
-      this.length = fragment.getLength();
-      tuples = new String[0];
+      fs = fragment.getPath().getFileSystem(conf);
+      fis = fs.open(fragment.getPath());
+      startOffset = fragment.getStartOffset();
+      length = fragment.getLength();
 
+      if(startOffset > 0) startOffset--; // prev line feed
+
+      if (codec != null) {
+        decompressor = CodecPool.getDecompressor(codec);
+        if (codec instanceof SplittableCompressionCodec) {
+          SplitCompressionInputStream cIn = ((SplittableCompressionCodec) codec).createInputStream(
+              fis, decompressor, startOffset, startOffset + length,
+              SplittableCompressionCodec.READ_MODE.BYBLOCK);
+
+          startOffset = cIn.getAdjustedStart();
+          length = cIn.getAdjustedEnd() - startOffset;
+          filePosition = cIn;
+          is = cIn;
+        } else {
+          is = new DataInputStream(codec.createInputStream(fis, decompressor));
+        }
+      } else {
+        fis.seek(startOffset);
+        filePosition = fis;
+        is = fis;
+      }
+
+      tuples = new String[0];
       if (targets == null) {
         targets = schema.toArray();
       }
@@ -244,25 +333,36 @@ public class CSVFile {
       super.init();
 
       if (LOG.isDebugEnabled()) {
-        LOG.debug("CSVScanner open:" + fragment.getPath() + "," + startOffset + "," + length + ","
-            + fs.getFileStatus(fragment.getPath()).getLen());
+        LOG.debug("CSVScanner open:" + fragment.getPath() + "," + startOffset + "," + length +
+            "," + fs.getFileStatus(fragment.getPath()).getLen());
       }
 
       if (startOffset != 0) {
-        fis.seek(startOffset - 1);
-        while (fis.readByte() != LF) {
+        int rbyte;
+        while ((rbyte = is.read()) != LF) {
+          if(rbyte == -1) break;
         }
       }
-      startPos = fis.getPos();
+
       if (fragmentable() < 1) {
-        fis.close();
+        close();
         return;
       }
       page();
     }
 
     private long fragmentable() throws IOException {
-      return startOffset + length - fis.getPos();
+      return startOffset + length - getFilePosition();
+    }
+
+    private long getFilePosition() throws IOException {
+      long retVal;
+      if (filePosition != null) {
+        retVal = filePosition.getPos();
+      } else {
+        retVal = fis.getPos();
+      }
+      return retVal;
     }
 
     private void page() throws IOException {
@@ -270,40 +370,46 @@ public class CSVFile {
       currentIdx = 0;
 
       // Buffer size set
-      if (fragmentable() < DEFAULT_BUFFER_SIZE) {
-        bufSize = fragmentable();
+      if (isSplittable() &&  fragmentable() < DEFAULT_BUFFER_SIZE) {
+        bufSize = (int)fragmentable();
       }
 
       if (this.tail == null || this.tail.length == 0) {
-        this.pageStart = fis.getPos();
+        this.pageStart = getFilePosition();
         this.prevTailLen = 0;
       } else {
-        this.pageStart = fis.getPos() - this.tail.length;
+        this.pageStart = getFilePosition() - this.tail.length;
         this.prevTailLen = this.tail.length;
       }
 
       // Read
       int rbyte;
-      if (fis.getPos() == startPos) {
-        buf = new byte[(int) bufSize];
-        rbyte = fis.read(buf);
+      buf = new byte[bufSize];
+      rbyte = is.read(buf);
+
+      if(rbyte < 0){
+        eof = true; //EOF
+        return;
+      }
+
+      if (prevTailLen == 0) {
         tail = new byte[0];
-        tuples = StringUtils.split(new String(buf, 0, rbyte), (char) LF);
+        tuples = StringUtils.split(new String(buf, 0, rbyte), (char)LF);
       } else {
-        buf = new byte[(int) bufSize];
-        rbyte = fis.read(buf);
-        tuples = StringUtils.split(new String(tail) + new String(buf, 0, rbyte), (char) LF);
+        tuples = StringUtils.split(new String(tail) + new String(buf, 0, rbyte), (char)LF);
+        tail = null;
       }
 
       // Check tail
       if ((char) buf[rbyte - 1] != LF) {
-        if (fragmentable() < 1) {
+        if (isSplittable() && (fragmentable() < 1 || rbyte != bufSize)) {
           int cnt = 0;
-          byte[] temp = new byte[(int) DEFAULT_BUFFER_SIZE];
+          byte[] temp = new byte[DEFAULT_BUFFER_SIZE];
           // Read bytes
-          while ((temp[cnt] = fis.readByte()) != LF) {
+          while ((temp[cnt] = (byte)is.read()) != LF) {
             cnt++;
           }
+
           // Replace tuple
           tuples[tuples.length - 1] = tuples[tuples.length - 1] + new String(temp, 0, cnt);
           validIdx = tuples.length;
@@ -315,7 +421,8 @@ public class CSVFile {
         tail = new byte[0];
         validIdx = tuples.length;
       }
-      makeTupleOffset();
+
+     if(!isCompress()) makeTupleOffset();
     }
 
     private void makeTupleOffset() {
@@ -323,9 +430,7 @@ public class CSVFile {
       this.tupleOffsets = new long[this.validIdx];
       for (int i = 0; i < this.validIdx; i++) {
         this.tupleOffsets[i] = curTupleOffset + this.pageStart;
-        curTupleOffset += this.tuples[i].getBytes().length + 1;// tuple byte +
-                                                               // 1byte line
-                                                               // feed
+        curTupleOffset += this.tuples[i].getBytes().length + 1;//tuple byte +  1byte line feed
       }
     }
 
@@ -333,15 +438,27 @@ public class CSVFile {
     public Tuple next() throws IOException {
       try {
         if (currentIdx == validIdx) {
-          if (fragmentable() < 1) {
-            fis.close();
+          if (isSplittable() && fragmentable() < 1) {
+            close();
             return null;
           } else {
             page();
           }
+
+          if(eof){
+            close();
+            return null;
+          }
         }
-        long offset = this.tupleOffsets[currentIdx];
+
+
+        long offset = -1;
+        if(!isCompress()){
+          offset = this.tupleOffsets[currentIdx];
+        }
+
         String[] cells = StringUtils.splitPreserveAllTokens(tuples[currentIdx++], delimiter);
+
         int targetLen = targets.length;
         VTuple tuple = new VTuple(columnNum);
         Column field;
@@ -396,16 +513,23 @@ public class CSVFile {
                 Datum data = StorageGsonHelper.getInstance().fromJson(cell, Datum.class);
                 tuple.put(tid, data);
                 break;
+                case NULL:
+                  tuple.put(tid, NullDatum.get());
+                  break;
               }
             }
           }
         }
         return tuple;
       } catch (Throwable t) {
-        LOG.error("Tuple list length: " + tuples.length, t);
+        LOG.error("Tuple list length: " + (tuples != null ? tuples.length : 0), t);
         LOG.error("Tuple list current index: " + currentIdx, t);
       }
       return null;
+    }
+
+    private boolean isCompress() {
+      return codec != null;
     }
 
     @Override
@@ -415,7 +539,15 @@ public class CSVFile {
 
     @Override
     public void close() throws IOException {
-      fis.close();
+      try {
+        is.close();
+      } finally {
+        if (decompressor != null) {
+          decompressor.reset();
+          CodecPool.returnDecompressor(decompressor);
+          decompressor = null;
+        }
+      }
     }
 
     @Override
@@ -434,27 +566,34 @@ public class CSVFile {
 
     @Override
     public void seek(long offset) throws IOException {
+      if(isCompress()) throw new UnsupportedException();
+
       int tupleIndex = Arrays.binarySearch(this.tupleOffsets, offset);
       if (tupleIndex > -1) {
         this.currentIdx = tupleIndex;
-      } else if (offset >= this.pageStart + this.bufSize + this.prevTailLen - this.tail.length
-          || offset <= this.pageStart) {
-        fis.seek(offset);
+      } else if (isSplittable() && offset >= this.pageStart + this.bufSize
+          + this.prevTailLen - this.tail.length || offset <= this.pageStart) {
+        filePosition.seek(offset);
         tail = new byte[0];
-        buf = new byte[(int) DEFAULT_BUFFER_SIZE];
+        buf = new byte[DEFAULT_BUFFER_SIZE];
         bufSize = DEFAULT_BUFFER_SIZE;
         this.currentIdx = 0;
         this.validIdx = 0;
         // pageBuffer();
       } else {
-        throw new IOException("invalid offset " + " < pageStart : " + this.pageStart + " , " + "  pagelength : "
-            + this.bufSize + " , " + "  tail lenght : " + this.tail.length + "  input offset : " + offset + " >");
+        throw new IOException("invalid offset " +
+            " < pageStart : " +  this.pageStart + " , " +
+            "  pagelength : " + this.bufSize + " , " +
+            "  tail lenght : " + this.tail.length +
+            "  input offset : " + offset + " >");
       }
 
     }
 
     @Override
     public long getNextOffset() throws IOException {
+      if(isCompress()) throw new UnsupportedException();
+
       if (this.currentIdx == this.validIdx) {
         if (fragmentable() < 1) {
           return -1;
@@ -466,8 +605,8 @@ public class CSVFile {
     }
 
     @Override
-    public boolean isSplittable() {
-      return true;
+    public boolean isSplittable(){
+      return splittable;
     }
   }
 }

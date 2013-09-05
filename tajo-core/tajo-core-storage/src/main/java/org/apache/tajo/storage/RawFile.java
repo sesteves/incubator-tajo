@@ -18,6 +18,8 @@
 
 package org.apache.tajo.storage;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.TableMeta;
@@ -26,6 +28,7 @@ import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.ArrayDatum;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
+import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.json.CommonGsonHelper;
 import org.apache.tajo.util.BitArray;
 
@@ -38,6 +41,8 @@ import java.nio.channels.FileChannel;
 import java.util.Arrays;
 
 public class RawFile {
+  private static final Log LOG = LogFactory.getLog(RawFile.class);
+
   public static class RawFileScanner extends FileScanner implements SeekableScanner {
     private FileChannel channel;
     private DataType[] columnTypes;
@@ -50,6 +55,8 @@ public class RawFile {
     private BitArray nullFlags;
     private static final int RECORD_SIZE = 4;
     private int numBitsOfNullFlags;
+    private boolean eof = false;
+    private long fileSize;
 
     public RawFileScanner(Configuration conf, TableMeta meta, Path path) throws IOException {
       super(conf, meta, null);
@@ -68,8 +75,13 @@ public class RawFile {
       URI uri = path.toUri();
       RandomAccessFile raf = new RandomAccessFile(new File(uri), "r");
       channel = raf.getChannel();
+      fileSize = channel.size();
 
-      buffer = ByteBuffer.allocateDirect(65535);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("RawFileScanner open:" + path + "," + channel.position() + ", size :" + channel.size());
+      }
+
+      buffer = ByteBuffer.allocateDirect(65535 * 4);
 
       columnTypes = new DataType[schema.getColumnNum()];
       for (int i = 0; i < schema.getColumnNum(); i++) {
@@ -111,6 +123,7 @@ public class RawFile {
 
     @Override
     public Tuple next() throws IOException {
+      if(eof) return null;
 
       if (buffer.remaining() < headerSize) {
         if (!fillBuffer()) {
@@ -181,14 +194,6 @@ public class RawFile {
             tuple.put(i, DatumFactory.createFloat8(buffer.getDouble()));
             break;
 
-//          case TEXT :
-//            // TODO - shoud use CharsetEncoder / CharsetDecoder
-//            int strSize = buffer.getInt();
-//            byte [] strBytes = new byte[strSize];
-//            buffer.get(strBytes);
-//            tuple.put(i, DatumFactory.createText(new String(strBytes)));
-//            break;
-
           case TEXT :
             // TODO - shoud use CharsetEncoder / CharsetDecoder
             int strSize2 = buffer.getInt();
@@ -219,10 +224,17 @@ public class RawFile {
             tuple.put(i, array);
             break;
 
-            default:
+          case NULL:
+            tuple.put(i, NullDatum.get());
+            break;
+
+          default:
         }
       }
 
+      if(!buffer.hasRemaining() && channel.position() == fileSize){
+        eof = true;
+      }
       return tuple;
     }
 
@@ -234,10 +246,12 @@ public class RawFile {
       channel.position(0);
       channel.read(buffer);
       buffer.flip();
+      eof = false;
     }
 
     @Override
     public void close() throws IOException {
+      buffer.clear();
       channel.close();
     }
 
@@ -362,6 +376,10 @@ public class RawFile {
         }
 
         switch(columnTypes[i].getType()) {
+          case NULL:
+            nullFlags.set(i);
+            continue;
+
           case BOOLEAN:
           case BIT:
             buffer.put(t.get(i).asByte());

@@ -117,6 +117,25 @@ public class StorageManager {
     fs.delete(tablePath, true);
   }
 
+  public boolean exists(Path path) throws IOException {
+    FileSystem fileSystem = path.getFileSystem(conf);
+    return fileSystem.exists(path);
+  }
+
+  /**
+   * This method deletes only data contained in the given path.
+   *
+   * @param path The path in which data are deleted.
+   * @throws IOException
+   */
+  public void deleteData(Path path) throws IOException {
+    FileSystem fileSystem = path.getFileSystem(conf);
+    FileStatus[] fileLists = fileSystem.listStatus(path);
+    for (FileStatus status : fileLists) {
+      fileSystem.delete(status.getPath(), true);
+    }
+  }
+
   public Path getTablePath(String tableName) {
     return new Path(tableBaseDir, tableName);
   }
@@ -223,7 +242,7 @@ public class StorageManager {
     List<Fragment> listTablets = new ArrayList<Fragment>();
     Fragment tablet;
 
-    FileStatus[] fileLists = fs.listStatus(new Path(tablePath, "data"));
+    FileStatus[] fileLists = fs.listStatus(tablePath);
     for (FileStatus file : fileLists) {
       tablet = new Fragment(tablePath.getName(), file.getPath(), meta, 0, file.getLen());
       listTablets.add(tablet);
@@ -253,7 +272,7 @@ public class StorageManager {
     List<Fragment> listTablets = new ArrayList<Fragment>();
     Fragment tablet;
 
-    FileStatus[] fileLists = fs.listStatus(new Path(tablePath, "data"));
+    FileStatus[] fileLists = fs.listStatus(tablePath);
     for (FileStatus file : fileLists) {
       long remainFileSize = file.getLen();
       long start = 0;
@@ -320,16 +339,9 @@ public class StorageManager {
   public long calculateSize(Path tablePath) throws IOException {
     FileSystem fs = tablePath.getFileSystem(conf);
     long totalSize = 0;
-    Path oldPath = new Path(tablePath, "data");
-    Path dataPath;
-    if (fs.exists(oldPath)) {
-      dataPath = oldPath;
-    } else {
-      dataPath = tablePath;
-    }
 
-    if (fs.exists(dataPath)) {
-      for (FileStatus status : fs.listStatus(dataPath)) {
+    if (fs.exists(tablePath)) {
+      for (FileStatus status : fs.listStatus(tablePath)) {
         totalSize += status.getLen();
       }
     }
@@ -636,7 +648,7 @@ public class StorageManager {
       }
     }
 
-    LOG.debug("Total # of splits: " + splits.size());
+    LOG.info("Total # of splits: " + splits.size());
     return splits;
   }
 

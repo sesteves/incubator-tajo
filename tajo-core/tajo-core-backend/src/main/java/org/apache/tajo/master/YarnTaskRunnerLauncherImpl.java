@@ -35,9 +35,7 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.master.TaskRunnerGroupEvent.EventType;
 import org.apache.tajo.master.querymaster.QueryMasterTask;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -80,15 +78,9 @@ public class YarnTaskRunnerLauncherImpl extends AbstractService implements TaskR
   public void stop() {
     executorService.shutdownNow();
 
-    while(!executorService.isTerminated()) {
-      LOG.info("====>executorService.isTerminated:" + executorService.isTerminated() + "," + executorService.isShutdown());
-      try {
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-      }
-    }
     Map<ContainerId, ContainerProxy> containers = context.getResourceAllocator().getContainers();
-    for(ContainerProxy eachProxy: containers.values()) {
+    List<ContainerProxy> list = new ArrayList<ContainerProxy>(containers.values());
+    for(ContainerProxy eachProxy:  list) {
       try {
         eachProxy.stopContainer();
       } catch (Exception e) {

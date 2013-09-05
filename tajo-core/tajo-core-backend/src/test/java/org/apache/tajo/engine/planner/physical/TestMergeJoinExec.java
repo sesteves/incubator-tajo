@@ -33,6 +33,7 @@ import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
+import org.apache.tajo.engine.planner.PlanningException;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.logical.SortNode;
 import org.apache.tajo.storage.*;
@@ -145,7 +146,7 @@ public class TestMergeJoinExec {
   };
 
   @Test
-  public final void testInnerJoin() throws IOException {
+  public final void testMergeInnerJoin() throws IOException, PlanningException {
     Fragment[] empFrags = sm.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
         Integer.MAX_VALUE);
     Fragment[] peopleFrags = sm.splitNG(conf, "people", people.getMeta(), people.getPath(),
@@ -153,7 +154,7 @@ public class TestMergeJoinExec {
 
     Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
 
-    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testInnerJoin");
+    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testMergeInnerJoin");
     TaskAttemptContext ctx = new TaskAttemptContext(conf,
         TUtil.newQueryUnitAttemptId(), merged, workDir);
     Expr expr = analyzer.parse(QUERIES[0]);
@@ -167,8 +168,8 @@ public class TestMergeJoinExec {
     // TODO - should be planed with user's optimization hint
     if (!(proj.getChild() instanceof MergeJoinExec)) {
       BinaryPhysicalExec nestedLoopJoin = (BinaryPhysicalExec) proj.getChild();
-      SeqScanExec outerScan = (SeqScanExec) nestedLoopJoin.getOuterChild();
-      SeqScanExec innerScan = (SeqScanExec) nestedLoopJoin.getInnerChild();
+      SeqScanExec outerScan = (SeqScanExec) nestedLoopJoin.getLeftChild();
+      SeqScanExec innerScan = (SeqScanExec) nestedLoopJoin.getRightChild();
 
       SeqScanExec tmp;
       if (!outerScan.getTableName().equals("employee")) {

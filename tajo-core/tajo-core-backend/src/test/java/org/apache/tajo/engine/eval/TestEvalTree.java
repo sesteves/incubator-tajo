@@ -32,6 +32,7 @@ import org.apache.tajo.engine.json.CoreGsonHelper;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalPlan;
 import org.apache.tajo.engine.planner.LogicalPlanner;
+import org.apache.tajo.engine.planner.PlanningException;
 import org.apache.tajo.engine.planner.Target;
 import org.apache.tajo.master.TajoMaster;
 import org.apache.tajo.storage.Tuple;
@@ -124,7 +125,7 @@ public class TestEvalTree {
       "select name from people where NOT (20 > 30)", // 5
   };
 
-  public static Target[] getRawTargets(String query) {
+  public static Target[] getRawTargets(String query) throws PlanningException {
     Expr expr = analyzer.parse(query);
     LogicalPlan plan = planner.createPlan(expr);
     Target [] targets = plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
@@ -136,7 +137,12 @@ public class TestEvalTree {
 
   public static EvalNode getRootSelection(String query) {
     Expr block = analyzer.parse(query);
-    LogicalPlan plan = planner.createPlan(block);
+    LogicalPlan plan = null;
+    try {
+      plan = planner.createPlan(block);
+    } catch (PlanningException e) {
+      e.printStackTrace();
+    }
     EvalNode qual = plan.getRootBlock().getSelectionNode().getQual();
     assertJsonSerDer(qual);
     return qual;
@@ -675,6 +681,29 @@ public class TestEvalTree {
     assertIsNull(expr);
   }
 
+  static String[] IN_PREDICATE = {
+      "select name, score, age from people where name in ('abc', 'def', 'ghi')", // 0
+      "select name, score, age from people where score in (1, 2, 3)", // 1
+      "select name, score, age from people where score not in (1, 2, 3)", // 2
+  };
+
+  @Test
+  public void testInEval() {
+    EvalNode expr;
+
+    expr = getRootSelection(IN_PREDICATE[0]);
+    assertEquals(EvalType.IN, expr.getType());
+    InEval inEval = (InEval) expr;
+
+    expr = getRootSelection(IN_PREDICATE[1]);
+    assertEquals(EvalType.IN, expr.getType());
+
+    expr = getRootSelection(IN_PREDICATE[2]);
+    assertEquals(EvalType.IN, expr.getType());
+    inEval = (InEval) expr;
+    assertTrue(inEval.isNot());
+  }
+
   private void assertIsNull(EvalNode isNullEval) {
     assertEquals(EvalType.IS_NULL, isNullEval.getType());
     assertEquals(EvalType.FIELD, isNullEval.getLeftExpr().getType());
@@ -685,6 +714,7 @@ public class TestEvalTree {
 
   private static void assertJsonSerDer(EvalNode expr) {
     String json = expr.toJson();
+    System.out.println(json);
     EvalNode fromJson = CoreGsonHelper.fromJson(json, EvalNode.class);
     assertEquals(expr, fromJson);
   }

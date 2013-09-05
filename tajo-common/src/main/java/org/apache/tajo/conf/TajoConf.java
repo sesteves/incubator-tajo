@@ -71,7 +71,7 @@ public class TajoConf extends YarnConfiguration {
     //////////////////////////////////
     // Catalog Configuration
     //////////////////////////////////
-    CATALOG_ADDRESS("tajo.catalog.master.addr", "127.0.0.1:9002"),
+    CATALOG_ADDRESS("tajo.catalog.master.addr", "0.0.0.0:9002"),
 
     //////////////////////////////////
     // AM and RM
@@ -106,6 +106,7 @@ public class TajoConf extends YarnConfiguration {
     //////////////////////////////////
     EXT_SORT_BUFFER("tajo.extsort.buffer", 400000),
     BROADCAST_JOIN_THRESHOLD("tajo.join.broadcast.threshold", (long)5 * 1048576),
+    HASH_AGGREGATION_THRESHOLD("tajo.aggregation.hash.threshold", (long)512 * 1048576),
 
     //////////////////////////////////////////
     // Distributed Query Execution Parameters

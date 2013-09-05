@@ -18,19 +18,11 @@
 
 package org.apache.tajo.engine.planner.physical;
 
-import static org.junit.Assert.assertEquals;
-
-import java.io.IOException;
-
 import org.apache.hadoop.fs.Path;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
-import org.apache.tajo.catalog.CatalogService;
-import org.apache.tajo.catalog.CatalogUtil;
-import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
@@ -40,17 +32,19 @@ import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.LogicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlanner;
 import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
+import org.apache.tajo.engine.planner.PlanningException;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
-import org.apache.tajo.storage.Appender;
-import org.apache.tajo.storage.Fragment;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.storage.VTuple;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
 import org.apache.tajo.util.TUtil;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.IOException;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TestNLJoinExec {
   private TajoConf conf;
@@ -85,15 +79,19 @@ public class TestNLJoinExec {
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
     for (int i = 0; i < 50; i++) {
-      tuple.put(new Datum[] { DatumFactory.createInt4(i), DatumFactory.createInt4(i), DatumFactory.createInt4(10 + i),
-          DatumFactory.createText("dept_" + i) });
+      tuple.put(new Datum[] {
+          DatumFactory.createInt4(i),
+          DatumFactory.createInt4(i),
+          DatumFactory.createInt4(10 + i),
+          DatumFactory.createText("dept_" + i)});
       appender.addTuple(tuple);
     }
     appender.flush();
     appender.close();
-    employee = CatalogUtil.newTableDesc("employee", employeeMeta, employeePath);
+    employee = CatalogUtil.newTableDesc("employee", employeeMeta,
+        employeePath);
     catalog.addTable(employee);
-
+    
     Schema peopleSchema = new Schema();
     peopleSchema.addColumn("empId", Type.INT4);
     peopleSchema.addColumn("fk_memId", Type.INT4);
@@ -105,14 +103,18 @@ public class TestNLJoinExec {
     appender.init();
     tuple = new VTuple(peopleMeta.getSchema().getColumnNum());
     for (int i = 1; i < 50; i += 2) {
-      tuple.put(new Datum[] { DatumFactory.createInt4(i), DatumFactory.createInt4(10 + i),
-          DatumFactory.createText("name_" + i), DatumFactory.createInt4(30 + i) });
+      tuple.put(new Datum[] {
+          DatumFactory.createInt4(i),
+          DatumFactory.createInt4(10 + i),
+          DatumFactory.createText("name_" + i),
+          DatumFactory.createInt4(30 + i)});
       appender.addTuple(tuple);
     }
     appender.flush();
     appender.close();
-
-    people = CatalogUtil.newTableDesc("people", peopleMeta, peoplePath);
+    
+    people = CatalogUtil.newTableDesc("people", peopleMeta,
+        peoplePath);
     catalog.addTable(people);
     analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
@@ -122,23 +124,25 @@ public class TestNLJoinExec {
   public void tearDown() throws Exception {
     util.shutdownCatalogCluster();
   }
-
+  
   String[] QUERIES = {
-      "select managerId, e.empId, deptName, e.memId from employee as e, people",
-      "select managerId, e.empId, deptName, e.memId from employee as e inner join people as p on "
-          + "e.empId = p.empId and e.memId = p.fk_memId" };
-
+    "select managerId, e.empId, deptName, e.memId from employee as e, people",
+    "select managerId, e.empId, deptName, e.memId from employee as e inner join people as p on " +
+        "e.empId = p.empId and e.memId = p.fk_memId"
+  };
+  
   @Test
-  public final void testCrossJoin() throws IOException {
+  public final void testNLCrossJoin() throws IOException, PlanningException {
     Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
         Integer.MAX_VALUE);
     Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
         Integer.MAX_VALUE);
+    
+    Fragment [] merged = TUtil.concat(empFrags, peopleFrags);
 
-    Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
-
-    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testCrossJoin");
-    TaskAttemptContext ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(), merged, workDir);
+    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testNLCrossJoin");
+    TaskAttemptContext ctx = new TaskAttemptContext(conf,
+        TUtil.newQueryUnitAttemptId(), merged, workDir);
     Expr context = analyzer.parse(QUERIES[0]);
     LogicalNode plan = planner.createPlan(context).getRootBlock().getRoot();
 
@@ -151,6 +155,41 @@ public class TestNLJoinExec {
       i++;
     }
     exec.close();
-    assertEquals(50 * 50 / 2, i); // expected 10 * 5
+    assertEquals(50*50/2, i); // expected 10 * 5
+  }
+
+  @Test
+  public final void testNLInnerJoin() throws IOException, PlanningException {
+    Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
+        Integer.MAX_VALUE);
+    Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
+        Integer.MAX_VALUE);
+    
+    Fragment [] merged = TUtil.concat(empFrags, peopleFrags);
+
+    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testNLInnerJoin");
+    TaskAttemptContext ctx = new TaskAttemptContext(conf,
+        TUtil.newQueryUnitAttemptId(), merged, workDir);
+    Expr context =  analyzer.parse(QUERIES[1]);
+    LogicalNode plan = planner.createPlan(context).getRootBlock().getRoot();
+    //LogicalOptimizer.optimize(ctx, plan);
+
+    PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf, sm);
+    PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
+    
+    Tuple tuple;
+    int i = 1;
+    int count = 0;
+    exec.init();
+    while ((tuple = exec.next()) != null) {
+      count++;
+      assertTrue(i == tuple.getInt(0).asInt4());
+      assertTrue(i == tuple.getInt(1).asInt4());
+      assertTrue(("dept_" + i).equals(tuple.getString(2).asChars()));
+      assertTrue(10 + i == tuple.getInt(3).asInt4());
+      i += 2;
+    }
+    exec.close();
+    assertEquals(50 / 2, count);
   }
 }

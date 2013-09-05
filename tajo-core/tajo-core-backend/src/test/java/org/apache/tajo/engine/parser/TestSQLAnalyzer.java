@@ -78,18 +78,6 @@ public class TestSQLAnalyzer {
   }
 
   @Test
-  public void testInsert1() throws IOException {
-    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_1.sql"));
-    parseQuery(sql);
-  }
-
-  @Test
-  public void testInsert2() throws IOException {
-    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_2.sql"));
-    parseQuery(sql);
-  }
-
-  @Test
   public void testGroupby1() throws IOException {
     String sql = FileUtil.readTextFile(new File("src/test/queries/groupby_1.sql"));
     parseQuery(sql);
@@ -242,6 +230,48 @@ public class TestSQLAnalyzer {
   @Test
   public void testCreateTable10() throws IOException {
     String sql = FileUtil.readTextFile(new File("src/test/queries/create_table_10.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testTableSubQuery1() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/table_subquery1.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertIntoTable() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_into_select_1.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertIntoLocation() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_into_select_2.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertIntoTable2() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_into_select_3.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertOverwriteIntoTable() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_overwrite_into_select_1.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertOverwriteIntoLocation() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_overwrite_into_select_2.sql"));
+    parseQuery(sql);
+  }
+
+  @Test
+  public void testInsertOverwriteIntoTable2() throws IOException {
+    String sql = FileUtil.readTextFile(new File("src/test/queries/insert_overwrite_into_select_3.sql"));
     parseQuery(sql);
   }
 

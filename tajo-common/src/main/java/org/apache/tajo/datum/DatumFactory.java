@@ -18,12 +18,9 @@
 
 package org.apache.tajo.datum;
 
-import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.util.Bytes;
-
-import java.io.UnsupportedEncodingException;
 
 public class DatumFactory {
 
@@ -59,6 +56,8 @@ public class DatumFactory {
         return NullDatum.class;
       case ARRAY:
         return ArrayDatum.class;
+      case NULL:
+        return NullDatum.class;
       default:
         throw new UnsupportedOperationException(type.name());
     }

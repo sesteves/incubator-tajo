@@ -101,6 +101,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private Scanner outerScanner;
 
+  private long startTick;
+
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
@@ -192,6 +194,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   @Override
   public Tuple next() throws IOException {
     if (step == 1) {
+      startTick = System.currentTimeMillis();
       partitionHistogram();
       bucketInnerRelation();
       step++;
@@ -222,6 +225,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       while (true) {
         if (!hasTuples && !hasBuckets) {
           if (!bucketsMapIterator.hasNext()) {
+
+            System.out.println("#### DIFF TIME: " + (System.currentTimeMillis() - startTick));
             return null;
           }
           buckets = bucketsMap.get(bucketsMapIterator.next());
