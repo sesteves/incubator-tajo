@@ -150,26 +150,27 @@ public class TestHybridHashJoinExec {
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/testInnerJoin");
     TaskAttemptContext ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(), merged, workDir);
 
-    // setting histogram
-    Map<Integer, Long> histogram = new TreeMap<Integer, Long>();
-    VTuple keyTuple = new VTuple(2);
+    if (histogramGranularity != -1) {
+      // setting histogram
+      Map<Integer, Long> histogram = new TreeMap<Integer, Long>();
+      VTuple keyTuple = new VTuple(2);
 
-    for (int i = 1; i < 1000; i += 2) {
-      keyTuple.put(new Datum[] { DatumFactory.createInt4(i), DatumFactory.createInt4(10 + i) });
+      for (int i = 1; i < 1000; i += 2) {
+        keyTuple.put(new Datum[] { DatumFactory.createInt4(i), DatumFactory.createInt4(10 + i) });
 
-      int key = keyTuple.hashCode() + histogramGranularity - (keyTuple.hashCode() % histogramGranularity);
-      long tupleSize = 20L;
+        int key = keyTuple.hashCode() + histogramGranularity - (keyTuple.hashCode() % histogramGranularity);
+        long tupleSize = 20L;
 
-      Long accumulated = histogram.get(key);
-      if (accumulated != null) {
-        histogram.put(key, accumulated + tupleSize);
-      } else {
-        histogram.put(key, tupleSize);
+        Long accumulated = histogram.get(key);
+        if (accumulated != null) {
+          histogram.put(key, accumulated + tupleSize);
+        } else {
+          histogram.put(key, tupleSize);
+        }
+
       }
-
+      ctx.setHistogram(histogram);
     }
-    ctx.setHistogram(histogram);
-
     Expr expr = analyzer.parse(QUERIES[0]);
     LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
 
@@ -180,6 +181,25 @@ public class TestHybridHashJoinExec {
   @Test
   public final void testBucketZero() throws PlanningException, IOException {
     PhysicalExec exec = getPhysicalExec(100);
+    Tuple tuple;
+    int count = 0;
+    int i = 1;
+    exec.init();
+    while ((tuple = exec.next()) != null) {
+      count++;
+      assertTrue(i == tuple.getInt(0).asInt4());
+      assertTrue(i == tuple.getInt(1).asInt4());
+      assertTrue(("dept_" + decimalFormat.format(i)).equals(tuple.getString(2).asChars()));
+      assertTrue(10 + i == tuple.getInt(3).asInt4());
+      i += 2;
+    }
+    exec.close();
+    assertEquals(1000 / 2, count);
+  }
+
+  @Test
+  public final void testBucketZeroWithoutHistogram() throws IOException, PlanningException {
+    PhysicalExec exec = getPhysicalExec(-1);
     Tuple tuple;
     int count = 0;
     int i = 1;
@@ -241,5 +261,4 @@ public class TestHybridHashJoinExec {
     exec.close();
     assertEquals(1000 / 2, count);
   }
-
 }
