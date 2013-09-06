@@ -19,7 +19,6 @@
 package org.apache.tajo.engine.planner.physical;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -27,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.catalog.CatalogUtil;
@@ -50,6 +51,7 @@ import org.apache.tajo.storage.VTuple;
  * This physical operator implements the hybrid hash join algorithm.
  */
 public class HybridHashJoinExec extends BinaryPhysicalExec {
+  private static Log LOG = LogFactory.getLog(HybridHashJoinExec.class);
 
   private final static long WORKING_MEMORY = 1048576 * 128; // 128MB
 
@@ -71,8 +73,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private Tuple outerTuple;
   private VTuple outerKeyTuple;
 
-  List<ByteBuffer> innerBucketBuffers;
-  List<ByteBuffer> outerBucketBuffers;
   private Iterator<Tuple> iterator;
   private boolean foundMatch = false;
 
@@ -140,8 +140,12 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private void partitionHistogram() throws IOException {
     Map<Integer, Long> histogram = context.getHistogram();
     if (histogram == null) {
-      throw new IOException(
-          "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
+      LOG.debug("No histogram provided.");
+      // throw new IOException(
+      // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
+
+      histogram = new TreeMap<Integer, Long>();
+      histogram.put(Integer.MAX_VALUE, workingMemory);
     }
 
     int lastKey = -1;
