@@ -34,6 +34,7 @@ import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
+import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.engine.eval.EvalContext;
 import org.apache.tajo.engine.eval.EvalNode;
 import org.apache.tajo.engine.planner.PlannerUtil;
@@ -106,6 +107,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
+    this.workingMemory = context.getConf().getIntVar(ConfVars.HYBRID_HASH_JOIN_MEMORY) * 1024 * 1024;
+
     this.joinQual = plan.getJoinQual();
     this.qualCtx = joinQual.newContext();
     this.tupleSlots = new HashMap<Tuple, List<Tuple>>(10000);
@@ -139,12 +142,14 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private void partitionHistogram() throws IOException {
     Map<Integer, Long> histogram = context.getHistogram();
-    if (histogram == null) {
+    if (histogram == null || histogram.size() == 0) {
       LOG.debug("No histogram provided.");
       // throw new IOException(
       // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
 
       histogram = new TreeMap<Integer, Long>();
+
+      // FIXME what if inner relation tuples exceed working memory ?
       histogram.put(Integer.MAX_VALUE, workingMemory);
     }
 
