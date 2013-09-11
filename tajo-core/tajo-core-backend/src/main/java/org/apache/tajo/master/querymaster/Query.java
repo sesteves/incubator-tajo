@@ -354,6 +354,9 @@ public class Query implements EventHandler<QueryEvent> {
               catalog.addTable(updatingTable);
             }
           }
+          histogramBytes = Long.MAX_VALUE;
+          histogram = null;
+          histogramCount = 0;
 
           return query.finished(QueryState.QUERY_SUCCEEDED);
         }
