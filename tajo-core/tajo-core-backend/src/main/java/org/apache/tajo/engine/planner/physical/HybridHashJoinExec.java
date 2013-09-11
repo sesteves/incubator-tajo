@@ -51,12 +51,14 @@ import org.apache.tajo.storage.VTuple;
 /**
  * This physical operator implements the hybrid hash join algorithm.
  */
+/**
+ * @author sergio
+ * 
+ */
 public class HybridHashJoinExec extends BinaryPhysicalExec {
   private static Log LOG = LogFactory.getLog(HybridHashJoinExec.class);
 
-  private final static long WORKING_MEMORY = 1048576 * 128; // 128MB
-
-  private long workingMemory = WORKING_MEMORY;
+  private long workingMemory;
 
   private EvalNode joinQual;
   private FrameTuple frameTuple;
@@ -414,6 +416,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     return keyTuple;
   }
 
+  // for testing purposes
   public void setWorkingMemory(long workingMemory) {
     this.workingMemory = workingMemory;
   }
