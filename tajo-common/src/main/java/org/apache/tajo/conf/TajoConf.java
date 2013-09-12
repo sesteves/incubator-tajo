@@ -110,6 +110,7 @@ public class TajoConf extends YarnConfiguration {
     EXT_SORT_BUFFER("tajo.extsort.buffer", 400000),
     BROADCAST_JOIN_THRESHOLD("tajo.join.broadcast.threshold", (long)5 * 1048576),
     HASH_AGGREGATION_THRESHOLD("tajo.aggregation.hash.threshold", (long)512 * 1048576),
+    HYBRID_HASH_JOIN_MEMORY("tajo.hybrid-hash-join.memory-mb", 128),
 
     //////////////////////////////////////////
     // Distributed Query Execution Parameters
