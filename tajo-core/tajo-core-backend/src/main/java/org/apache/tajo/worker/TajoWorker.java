@@ -21,11 +21,12 @@ package org.apache.tajo.worker;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.util.StringUtils;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.service.CompositeService;
 import org.apache.hadoop.yarn.util.RackResolver;
 import org.apache.tajo.QueryId;
+import org.apache.tajo.TajoConstants;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.catalog.CatalogClient;
 import org.apache.tajo.catalog.CatalogService;
@@ -148,9 +149,9 @@ public class TajoWorker extends CompositeService {
 
       tajoWorkerManagerService = new TajoWorkerManagerService(workerContext, managerPort);
       addService(tajoWorkerManagerService);
-      LOG.info("====> Tajo worker started: mode=" + daemonMode + ", clientPort=" + clientPort + ", managerPort=" + managerPort);
+      LOG.info("Tajo worker started: mode=" + daemonMode + ", clientPort=" + clientPort + ", managerPort=" + managerPort);
     } else {
-      LOG.info("====> Tajo worker started: mode=" + daemonMode);
+      LOG.info("Tajo worker started: mode=" + daemonMode);
     }
 
     super.init(conf);
@@ -252,8 +253,7 @@ public class TajoWorker extends CompositeService {
   }
 
   private void setWorkerMode(String[] params) {
-    if("qm".equals(daemonMode)) {
-      //QueryMaster mode
+    if("qm".equals(daemonMode)) { //QueryMaster mode
 
       String tajoMasterAddress = params[2];
       connectToTajoMaster(tajoMasterAddress);
@@ -262,11 +262,9 @@ public class TajoWorker extends CompositeService {
       QueryId queryId = TajoIdUtils.parseQueryId(params[1]);
       tajoWorkerManagerService.getQueryMaster().reportQueryStatusToQueryMaster(
           queryId, TajoProtos.QueryState.QUERY_MASTER_LAUNCHED);
-    } else if("tr".equals(daemonMode)) {
-      //TaskRunner mode
+    } else if("tr".equals(daemonMode)) { //TaskRunner mode
       taskRunnerManager.startTask(params);
-    } else {
-      //Standby mode
+    } else { //Standby mode
       connectToTajoMaster(tajoConf.get("tajo.master.manager.addr"));
       connectToCatalog();
       workerHeartbeatThread = new WorkerHeartbeatThread();
@@ -297,10 +295,10 @@ public class TajoWorker extends CompositeService {
 
   private void connectToCatalog() {
     // TODO: To be improved. it's a hack. It assumes that CatalogServer is embedded in TajoMaster.
-    String hostName = this.tajoMasterAddress.getHostName();
-    int port = Integer.parseInt(tajoConf.getVar(TajoConf.ConfVars.CATALOG_ADDRESS).split(":")[1]);
+    String catalogAddr = tajoConf.getVar(TajoConf.ConfVars.CATALOG_ADDRESS);
+    //int port = Integer.parseInt(tajoConf.getVar(TajoConf.ConfVars.CATALOG_ADDRESS).split(":")[1]);
     try {
-      catalogClient = new CatalogClient(hostName, port);
+      catalogClient = new CatalogClient(tajoConf);
     } catch (IOException e) {
       e.printStackTrace();
     }
@@ -317,7 +315,7 @@ public class TajoWorker extends CompositeService {
       int workerMemoryMBSlots;
       int workerCpuCoreSlots;
 
-      boolean useSystemInfo = tajoConf.getBoolean("tajo.worker.slots.use.os.info", true);
+      boolean useSystemInfo = tajoConf.getBoolean("tajo.worker.slots.use.os.info", false);
 
       try {
         mountPaths = getMountPath();
@@ -476,7 +474,7 @@ public class TajoWorker extends CompositeService {
         (com.sun.management.OperatingSystemMXBean)
             java.lang.management.ManagementFactory.getOperatingSystemMXBean();
     long max = bean.getTotalPhysicalMemorySize();
-    return ((int)(max/1024));
+    return ((int) (max / (1024 * 1024)));
   }
 
   public static void main(String[] args) throws Exception {
@@ -489,9 +487,12 @@ public class TajoWorker extends CompositeService {
 
     String workerMode = args[0];
 
+    TajoConf tajoConf = new TajoConf();
+    tajoConf.addResource(new Path(TajoConstants.SYSTEM_CONF_FILENAME));
+
     try {
       TajoWorker tajoWorker = new TajoWorker(workerMode);
-      tajoWorker.startWorker(new TajoConf(new YarnConfiguration()), args);
+      tajoWorker.startWorker(tajoConf, args);
     } catch (Throwable t) {
       LOG.fatal("Error starting TajoWorker", t);
       System.exit(-1);

@@ -28,26 +28,19 @@ import java.util.Map;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.common.ProtoObject;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
-import org.apache.tajo.master.QueryMeta;
+import org.apache.tajo.master.QueryContext;
 import org.apache.tajo.storage.Fragment;
 
 public interface QueryUnitRequest extends ProtoObject<TajoWorkerProtocol.QueryUnitRequestProto> {
 
-  public QueryUnitAttemptId getId();
-
-  public List<Fragment> getFragments();
-
-  public String getOutputTableId();
-
-  public boolean isClusteredOutput();
-
-  public String getSerializedData();
-
-  public boolean isInterQuery();
-
-  public void setInterQuery();
-
-  public void addFetch(String name, URI uri);
+	public QueryUnitAttemptId getId();
+	public List<Fragment> getFragments();
+	public String getOutputTableId();
+	public boolean isClusteredOutput();
+	public String getSerializedData();
+	public boolean isInterQuery();
+	public void setInterQuery();
+	public void addFetch(String name, URI uri);
 
   public List<TajoWorkerProtocol.Fetch> getFetches();
 
@@ -63,5 +56,5 @@ public interface QueryUnitRequest extends ProtoObject<TajoWorkerProtocol.QueryUn
 
   public Map<Integer, Long> getHistogram();
 
-  public QueryMeta getQueryMeta();
+  public QueryContext getQueryContext();
 }

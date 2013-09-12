@@ -18,45 +18,26 @@
 
 package org.apache.tajo.storage;
 
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Arrays;
-
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.Seekable;
-import org.apache.hadoop.io.compress.CompressionCodec;
-import org.apache.hadoop.io.compress.CompressionCodecFactory;
-import org.apache.hadoop.io.compress.CompressionOutputStream;
-import org.apache.hadoop.io.compress.Compressor;
-import org.apache.hadoop.io.compress.Decompressor;
-import org.apache.hadoop.io.compress.SplitCompressionInputStream;
-import org.apache.hadoop.io.compress.SplittableCompressionCodec;
+import org.apache.hadoop.io.compress.*;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStat;
-import org.apache.tajo.datum.ArrayDatum;
-import org.apache.tajo.datum.CharDatum;
-import org.apache.tajo.datum.Datum;
-import org.apache.tajo.datum.DatumFactory;
-import org.apache.tajo.datum.NullDatum;
-import org.apache.tajo.datum.TextDatum;
+import org.apache.tajo.datum.*;
 import org.apache.tajo.exception.UnsupportedException;
 import org.apache.tajo.storage.compress.CodecPool;
 import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
 import org.apache.tajo.storage.json.StorageGsonHelper;
+
+import java.io.*;
+import java.util.Arrays;
 
 public class CSVFile {
   public static final String DELIMITER = "csvfile.delimiter";
@@ -78,7 +59,8 @@ public class CSVFile {
     private CompressionCodec codec;
     private Path compressedPath;
 
-    public CSVAppender(Configuration conf, final TableMeta meta, final Path path) throws IOException {
+    public CSVAppender(Configuration conf, final TableMeta meta,
+                       final Path path) throws IOException {
       super(conf, meta, path);
       this.fs = path.getFileSystem(conf);
       this.meta = meta;
@@ -93,12 +75,11 @@ public class CSVFile {
       }
 
       String codecName = this.meta.getOption(TableMeta.COMPRESSION_CODEC);
-      if (!StringUtils.isEmpty(codecName)) {
+      if(!StringUtils.isEmpty(codecName)){
         codecFactory = new CompressionCodecFactory(conf);
         codec = codecFactory.getCodecByClassName(codecName);
-        compressor = CodecPool.getCompressor(codec);
-        if (compressor != null)
-          compressor.reset(); // builtin gzip is null
+        compressor =  CodecPool.getCompressor(codec);
+        if(compressor != null) compressor.reset();  //builtin gzip is null
 
         String extension = codec.getDefaultExtension();
         compressedPath = path.suffix(extension);
@@ -143,57 +124,60 @@ public class CSVFile {
         } else {
           col = schema.getColumn(i);
           switch (col.getDataType().getType()) {
-          case BOOLEAN:
-            sb.append(tuple.getBoolean(i));
-            break;
-          case BIT:
-            sb.append(new String(Base64.encodeBase64(tuple.getByte(i).asByteArray(), false)));
-            break;
-          case BLOB:
-            sb.append(new String(Base64.encodeBase64(tuple.getBytes(i).asByteArray(), false)));
-            break;
-          case CHAR:
-            CharDatum charDatum = tuple.getChar(i);
-            sb.append(charDatum);
-            byte[] pad = new byte[col.getDataType().getLength() - charDatum.size()];
-            sb.append(new String(pad));
-            break;
-          case TEXT:
-            TextDatum td = tuple.getText(i);
-            sb.append(td.toString());
-            break;
-          case INT2:
-            sb.append(tuple.getShort(i));
-            break;
-          case INT4:
-            sb.append(tuple.getInt(i));
-            break;
-          case INT8:
-            sb.append(tuple.getLong(i));
-            break;
-          case FLOAT4:
-            sb.append(tuple.getFloat(i));
-            break;
-          case FLOAT8:
-            sb.append(tuple.getDouble(i));
-            break;
-          case INET4:
-            sb.append(tuple.getIPv4(i));
-            break;
-          case INET6:
-            sb.append(tuple.getIPv6(i));
-          case ARRAY:
+            case BOOLEAN:
+              sb.append(tuple.getBoolean(i));
+              break;
+            case BIT:
+              sb.append(new String(Base64.encodeBase64(tuple.getByte(i)
+                  .asByteArray(), false)));
+              break;
+            case BLOB:
+              sb.append(new String(Base64.encodeBase64(tuple.getBytes(i)
+                  .asByteArray(), false)));
+              break;
+            case CHAR:
+              CharDatum charDatum = tuple.getChar(i);
+              sb.append(charDatum);
+              byte[] pad = new byte[col.getDataType().getLength()-charDatum.size()];
+              sb.append(new String(pad));
+              break;
+            case TEXT:
+              TextDatum td = tuple.getText(i);
+              sb.append(td.toString());
+              break;
+            case INT2:
+              sb.append(tuple.getShort(i));
+              break;
+            case INT4:
+              sb.append(tuple.getInt(i));
+              break;
+            case INT8:
+              sb.append(tuple.getLong(i));
+              break;
+            case FLOAT4:
+              sb.append(tuple.getFloat(i));
+              break;
+            case FLOAT8:
+              sb.append(tuple.getDouble(i));
+              break;
+            case INET4:
+              sb.append(tuple.getIPv4(i));
+              break;
+            case INET6:
+              sb.append(tuple.getIPv6(i));
+            case ARRAY:
             /*
              * sb.append("["); boolean first = true; ArrayDatum array =
              * (ArrayDatum) tuple.get(i); for (Datum field : array.toArray()) {
              * if (first) { first = false; } else { sb.append(delimiter); }
              * sb.append(field.asChars()); } sb.append("]");
              */
-            ArrayDatum array = (ArrayDatum) tuple.get(i);
-            sb.append(array.toJson());
-            break;
-          default:
-            throw new UnsupportedOperationException("Cannot write such field: " + tuple.get(i).type());
+              ArrayDatum array = (ArrayDatum) tuple.get(i);
+              sb.append(array.toJson());
+              break;
+            default:
+              throw new UnsupportedOperationException("Cannot write such field: "
+                  + tuple.get(i).type());
           }
         }
         sb.append(delimiter);
@@ -229,7 +213,7 @@ public class CSVFile {
       try {
         flush();
 
-        if (deflateFilter != null) {
+        if(deflateFilter != null) {
           deflateFilter.finish();
           deflateFilter.resetState();
           deflateFilter = null;
@@ -263,12 +247,13 @@ public class CSVFile {
   }
 
   public static class CSVScanner extends FileScanner implements SeekableScanner {
-    public CSVScanner(Configuration conf, final TableMeta meta, final Fragment fragment) throws IOException {
+    public CSVScanner(Configuration conf, final TableMeta meta,
+                      final Fragment fragment) throws IOException {
       super(conf, meta, fragment);
       factory = new CompressionCodecFactory(conf);
       codec = factory.getCodec(fragment.getPath());
       if (isCompress() && !(codec instanceof SplittableCompressionCodec)) {
-        splittable = false;
+          splittable = false;
       }
     }
 
@@ -277,7 +262,7 @@ public class CSVFile {
     private char delimiter;
     private FileSystem fs;
     private FSDataInputStream fis;
-    private InputStream is; // decompressd stream
+    private InputStream is; //decompressd stream
     private CompressionCodecFactory factory;
     private CompressionCodec codec;
     private Decompressor decompressor;
@@ -299,7 +284,7 @@ public class CSVFile {
 
       // Buffer size, Delimiter
       this.bufSize = DEFAULT_BUFFER_SIZE;
-      String delim = fragment.getMeta().getOption(DELIMITER, DELIMITER_DEFAULT);
+      String delim  = fragment.getMeta().getOption(DELIMITER, DELIMITER_DEFAULT);
       this.delimiter = delim.charAt(0);
 
       // Fragment information
@@ -308,14 +293,14 @@ public class CSVFile {
       startOffset = fragment.getStartOffset();
       length = fragment.getLength();
 
-      if (startOffset > 0)
-        startOffset--; // prev line feed
+      if(startOffset > 0) startOffset--; // prev line feed
 
       if (codec != null) {
         decompressor = CodecPool.getDecompressor(codec);
         if (codec instanceof SplittableCompressionCodec) {
-          SplitCompressionInputStream cIn = ((SplittableCompressionCodec) codec).createInputStream(fis, decompressor,
-              startOffset, startOffset + length, SplittableCompressionCodec.READ_MODE.BYBLOCK);
+          SplitCompressionInputStream cIn = ((SplittableCompressionCodec) codec).createInputStream(
+              fis, decompressor, startOffset, startOffset + length,
+              SplittableCompressionCodec.READ_MODE.BYBLOCK);
 
           startOffset = cIn.getAdjustedStart();
           length = cIn.getAdjustedEnd() - startOffset;
@@ -342,15 +327,14 @@ public class CSVFile {
       super.init();
 
       if (LOG.isDebugEnabled()) {
-        LOG.debug("CSVScanner open:" + fragment.getPath() + "," + startOffset + "," + length + ","
-            + fs.getFileStatus(fragment.getPath()).getLen());
+        LOG.debug("CSVScanner open:" + fragment.getPath() + "," + startOffset + "," + length +
+            "," + fs.getFileStatus(fragment.getPath()).getLen());
       }
 
       if (startOffset != 0) {
         int rbyte;
         while ((rbyte = is.read()) != LF) {
-          if (rbyte == -1)
-            break;
+          if(rbyte == -1) break;
         }
       }
 
@@ -380,8 +364,8 @@ public class CSVFile {
       currentIdx = 0;
 
       // Buffer size set
-      if (isSplittable() && fragmentable() < DEFAULT_BUFFER_SIZE) {
-        bufSize = (int) fragmentable();
+      if (isSplittable() &&  fragmentable() < DEFAULT_BUFFER_SIZE) {
+        bufSize = (int)fragmentable();
       }
 
       if (this.tail == null || this.tail.length == 0) {
@@ -397,16 +381,16 @@ public class CSVFile {
       buf = new byte[bufSize];
       rbyte = is.read(buf);
 
-      if (rbyte < 0) {
-        eof = true; // EOF
+      if(rbyte < 0){
+        eof = true; //EOF
         return;
       }
 
       if (prevTailLen == 0) {
         tail = new byte[0];
-        tuples = StringUtils.split(new String(buf, 0, rbyte), (char) LF);
+        tuples = StringUtils.split(new String(buf, 0, rbyte), (char)LF);
       } else {
-        tuples = StringUtils.split(new String(tail) + new String(buf, 0, rbyte), (char) LF);
+        tuples = StringUtils.split(new String(tail) + new String(buf, 0, rbyte), (char)LF);
         tail = null;
       }
 
@@ -416,7 +400,7 @@ public class CSVFile {
           int cnt = 0;
           byte[] temp = new byte[DEFAULT_BUFFER_SIZE];
           // Read bytes
-          while ((temp[cnt] = (byte) is.read()) != LF) {
+          while ((temp[cnt] = (byte)is.read()) != LF) {
             cnt++;
           }
 
@@ -432,8 +416,7 @@ public class CSVFile {
         validIdx = tuples.length;
       }
 
-      if (!isCompress())
-        makeTupleOffset();
+     if(!isCompress()) makeTupleOffset();
     }
 
     private void makeTupleOffset() {
@@ -441,9 +424,7 @@ public class CSVFile {
       this.tupleOffsets = new long[this.validIdx];
       for (int i = 0; i < this.validIdx; i++) {
         this.tupleOffsets[i] = curTupleOffset + this.pageStart;
-        curTupleOffset += this.tuples[i].getBytes().length + 1;// tuple byte +
-                                                               // 1byte line
-                                                               // feed
+        curTupleOffset += this.tuples[i].getBytes().length + 1;//tuple byte +  1byte line feed
       }
     }
 
@@ -458,14 +439,15 @@ public class CSVFile {
             page();
           }
 
-          if (eof) {
+          if(eof){
             close();
             return null;
           }
         }
 
+
         long offset = -1;
-        if (!isCompress()) {
+        if(!isCompress()){
           offset = this.tupleOffsets[currentIdx];
         }
 
@@ -487,47 +469,48 @@ public class CSVFile {
               tuple.put(tid, DatumFactory.createNullDatum());
             } else {
               switch (field.getDataType().getType()) {
-              case BOOLEAN:
-                tuple.put(tid, DatumFactory.createBool(cell));
-                break;
-              case BIT:
-                tuple.put(tid, DatumFactory.createBit(Base64.decodeBase64(cell)[0]));
-                break;
-              case CHAR:
-                String trimmed = cell.trim();
-                tuple.put(tid, DatumFactory.createChar(trimmed));
-                break;
-              case BLOB:
-                tuple.put(tid, DatumFactory.createBlob(Base64.decodeBase64(cell)));
-                break;
-              case INT2:
-                tuple.put(tid, DatumFactory.createInt2(cell));
-                break;
-              case INT4:
-                tuple.put(tid, DatumFactory.createInt4(cell));
-                break;
-              case INT8:
-                tuple.put(tid, DatumFactory.createInt8(cell));
-                break;
-              case FLOAT4:
-                tuple.put(tid, DatumFactory.createFloat4(cell));
-                break;
-              case FLOAT8:
-                tuple.put(tid, DatumFactory.createFloat8(cell));
-                break;
-              case TEXT:
-                tuple.put(tid, DatumFactory.createText(cell));
-                break;
-              case INET4:
-                tuple.put(tid, DatumFactory.createInet4(cell));
-                break;
-              case ARRAY:
-                Datum data = StorageGsonHelper.getInstance().fromJson(cell, Datum.class);
-                tuple.put(tid, data);
-                break;
-              case NULL:
-                tuple.put(tid, NullDatum.get());
-                break;
+                case BOOLEAN:
+                  tuple.put(tid, DatumFactory.createBool(cell));
+                  break;
+                case BIT:
+                  tuple.put(tid, DatumFactory.createBit(Base64.decodeBase64(cell)[0]));
+                  break;
+                case CHAR:
+                  String trimmed = cell.trim();
+                  tuple.put(tid, DatumFactory.createChar(trimmed));
+                  break;
+                case BLOB:
+                  tuple.put(tid, DatumFactory.createBlob(Base64.decodeBase64(cell)));
+                  break;
+                case INT2:
+                  tuple.put(tid, DatumFactory.createInt2(cell));
+                  break;
+                case INT4:
+                  tuple.put(tid, DatumFactory.createInt4(cell));
+                  break;
+                case INT8:
+                  tuple.put(tid, DatumFactory.createInt8(cell));
+                  break;
+                case FLOAT4:
+                  tuple.put(tid, DatumFactory.createFloat4(cell));
+                  break;
+                case FLOAT8:
+                  tuple.put(tid, DatumFactory.createFloat8(cell));
+                  break;
+                case TEXT:
+                  tuple.put(tid, DatumFactory.createText(cell));
+                  break;
+                case INET4:
+                  tuple.put(tid, DatumFactory.createInet4(cell));
+                  break;
+                case ARRAY:
+                  Datum data = StorageGsonHelper.getInstance().fromJson(cell,
+                      Datum.class);
+                  tuple.put(tid, data);
+                  break;
+                case NULL:
+                  tuple.put(tid, NullDatum.get());
+                  break;
               }
             }
           }
@@ -578,14 +561,13 @@ public class CSVFile {
 
     @Override
     public void seek(long offset) throws IOException {
-      if (isCompress())
-        throw new UnsupportedException();
+      if(isCompress()) throw new UnsupportedException();
 
       int tupleIndex = Arrays.binarySearch(this.tupleOffsets, offset);
       if (tupleIndex > -1) {
         this.currentIdx = tupleIndex;
-      } else if (isSplittable() && offset >= this.pageStart + this.bufSize + this.prevTailLen - this.tail.length
-          || offset <= this.pageStart) {
+      } else if (isSplittable() && offset >= this.pageStart + this.bufSize
+          + this.prevTailLen - this.tail.length || offset <= this.pageStart) {
         filePosition.seek(offset);
         tail = new byte[0];
         buf = new byte[DEFAULT_BUFFER_SIZE];
@@ -594,16 +576,18 @@ public class CSVFile {
         this.validIdx = 0;
         // pageBuffer();
       } else {
-        throw new IOException("invalid offset " + " < pageStart : " + this.pageStart + " , " + "  pagelength : "
-            + this.bufSize + " , " + "  tail lenght : " + this.tail.length + "  input offset : " + offset + " >");
+        throw new IOException("invalid offset " +
+            " < pageStart : " +  this.pageStart + " , " +
+            "  pagelength : " + this.bufSize + " , " +
+            "  tail lenght : " + this.tail.length +
+            "  input offset : " + offset + " >");
       }
 
     }
 
     @Override
     public long getNextOffset() throws IOException {
-      if (isCompress())
-        throw new UnsupportedException();
+      if(isCompress()) throw new UnsupportedException();
 
       if (this.currentIdx == this.validIdx) {
         if (fragmentable() < 1) {
@@ -616,7 +600,7 @@ public class CSVFile {
     }
 
     @Override
-    public boolean isSplittable() {
+    public boolean isSplittable(){
       return splittable;
     }
   }
