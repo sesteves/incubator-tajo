@@ -60,7 +60,7 @@ message QueryUnitRequestProto {
     repeated Fetch fetches = 7;
     optional bool shouldDie = 8;
     repeated int32 joinKeys = 9;
-    repeated KeyValue histogram = 10; 
+    optional bytes histogram = 10; 
     optional KeyValueSetProto queryContext = 11;
 }
 

@@ -21,23 +21,26 @@
  */
 package org.apache.tajo.catalog.statistics;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 import org.apache.tajo.catalog.json.CatalogGsonHelper;
 import org.apache.tajo.catalog.proto.CatalogProtos.ColumnStatProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue;
-import org.apache.tajo.catalog.proto.CatalogProtos.KeyValue.Builder;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
 import org.apache.tajo.common.ProtoObject;
 import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.util.TUtil;
+import org.xerial.snappy.Snappy;
 
 import com.google.common.base.Objects;
 import com.google.gson.Gson;
 import com.google.gson.annotations.Expose;
+import com.google.protobuf.ByteString;
 
 public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonObject {
   private TableStatProto.Builder builder = TableStatProto.newBuilder();
@@ -55,6 +58,8 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
   @Expose
   private List<ColumnStat> columnStats = null; // repeated
   @Expose
+  private byte[] histogramBytes = null;
+
   private Map<Integer, Long> histogram = null; // repeated
 
   public TableStat() {
@@ -85,12 +90,19 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
       columnStats.add(new ColumnStat(colProto));
     }
 
-    if (proto.getHistogramCount() > 0) {
-      this.histogram = new TreeMap<Integer, Long>();
-      for (KeyValue kv : proto.getHistogramList()) {
-        histogram.put(kv.getKey(), kv.getValue());
+    if (proto.hasHistogram()) {
+      this.histogramBytes = proto.getHistogram().toByteArray();
+      // deserializing
+      try {
+        ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(histogramBytes));
+        ObjectInputStream in = new ObjectInputStream(byteIn);
+        this.histogram = (Map<Integer, Long>) in.readObject();
+      } catch (Exception e) {
+        // TODO FIXME
+        System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
       }
     }
+
   }
 
   public Long getNumRows() {
@@ -210,11 +222,16 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
       }
     }
     if (this.histogram != null) {
-      for (int key : histogram.keySet()) {
-        Builder kvBuilder = KeyValue.newBuilder();
-        kvBuilder.setKey(key);
-        kvBuilder.setValue(histogram.get(key));
-        builder.addHistogram(kvBuilder.build());
+
+      // serializing
+      try {
+        ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
+        ObjectOutputStream out = new ObjectOutputStream(byteOut);
+        out.writeObject(histogram);
+        builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+      } catch (Exception e) {
+        // TODO FIXME
+        System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
       }
     }
 

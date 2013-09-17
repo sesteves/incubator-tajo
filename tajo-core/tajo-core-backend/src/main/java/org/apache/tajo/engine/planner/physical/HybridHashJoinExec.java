@@ -51,10 +51,6 @@ import org.apache.tajo.storage.VTuple;
 /**
  * This physical operator implements the hybrid hash join algorithm.
  */
-/**
- * @author sergio
- * 
- */
 public class HybridHashJoinExec extends BinaryPhysicalExec {
   private static Log LOG = LogFactory.getLog(HybridHashJoinExec.class);
 
@@ -145,7 +141,7 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   private void partitionHistogram() throws IOException {
     Map<Integer, Long> histogram = context.getHistogram();
     if (histogram == null || histogram.size() == 0) {
-      LOG.debug("No histogram provided.");
+      LOG.info("No histogram provided.");
       // throw new IOException(
       // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
 
@@ -153,6 +149,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
       // FIXME what if inner relation tuples exceed working memory ?
       histogram.put(Integer.MAX_VALUE, workingMemory);
+    } else {
+      LOG.info("Histogram size: " + histogram.size());
     }
 
     int lastKey = -1;
