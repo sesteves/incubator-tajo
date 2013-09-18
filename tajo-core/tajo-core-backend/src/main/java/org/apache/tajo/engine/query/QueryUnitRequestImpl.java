@@ -50,7 +50,8 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
   private List<Fetch> fetches;
   private Boolean shouldDie;
   private List<Integer> joinKeys;
-  private Map<Integer, Long> histogram;
+  // private Map<Integer, Long> histogram;
+  private byte[] histogramBytes;
   private QueryContext queryContext;
 
   private QueryUnitRequestProto proto = QueryUnitRequestProto.getDefaultInstance();
@@ -277,18 +278,8 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
     if (this.joinKeys != null) {
       builder.addAllJoinKeys(this.joinKeys);
     }
-
-    if (this.histogram != null) {
-      // serializing
-      try {
-        ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
-        ObjectOutputStream out = new ObjectOutputStream(byteOut);
-        out.writeObject(histogram);
-        builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
-      } catch (Exception e) {
-        // TODO FIXME
-        System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
-      }
+    if (this.histogramBytes != null) {
+      builder.setHistogram(ByteString.copyFrom(histogramBytes));
     }
     // if (this.histogram != null) {
     // for (int key : histogram.keySet()) {
@@ -329,25 +320,63 @@ public class QueryUnitRequestImpl implements QueryUnitRequest {
     return joinKeys;
   }
 
-  @Override
-  public void setHistogram(Map<Integer, Long> histogram) {
-    this.histogram = histogram;
-  }
+  // @Override
+  // public void setHistogram(Map<Integer, Long> histogram) {
+  // this.histogram = histogram;
+  // }
+  //
+  // @Override
+  // public Map<Integer, Long> getHistogram() {
+  // QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
+  // if (histogram == null && proto.hasHistogram()) {
+  // // deserializing
+  // try {
+  // ByteArrayInputStream byteIn = new
+  // ByteArrayInputStream(Snappy.uncompress(proto.getHistogram().toByteArray()));
+  // ObjectInputStream in = new ObjectInputStream(byteIn);
+  // this.histogram = (Map<Integer, Long>) in.readObject();
+  // } catch (Exception e) {
+  // // TODO FIXME
+  // System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
+  // }
+  // }
+  // return histogram;
+  // }
 
   @Override
   public Map<Integer, Long> getHistogram() {
     QueryUnitRequestProtoOrBuilder p = viaProto ? proto : builder;
-    if (histogram == null && proto.hasHistogram()) {
+
+    if (histogramBytes == null && proto.hasHistogram()) {
+      histogramBytes = proto.getHistogram().toByteArray();
+    }
+
+    if (histogramBytes != null) {
       // deserializing
       try {
-        ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(proto.getHistogram().toByteArray()));
+        ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(histogramBytes));
         ObjectInputStream in = new ObjectInputStream(byteIn);
-        this.histogram = (Map<Integer, Long>) in.readObject();
+        return (Map<Integer, Long>) in.readObject();
       } catch (Exception e) {
         // TODO FIXME
         System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
       }
     }
-    return histogram;
+    return null;
+  }
+
+  @Override
+  public void setHistogram(Map<Integer, Long> histogram) {
+    // serializing
+    try {
+      ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
+      ObjectOutputStream out = new ObjectOutputStream(byteOut);
+      out.writeObject(histogram);
+      // builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+      this.histogramBytes = Snappy.compress(byteOut.toByteArray());
+    } catch (Exception e) {
+      // TODO FIXME
+      System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
+    }
   }
 }
