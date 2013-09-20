@@ -28,6 +28,7 @@ import java.io.ObjectOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import org.apache.tajo.catalog.json.CatalogGsonHelper;
 import org.apache.tajo.catalog.proto.CatalogProtos.ColumnStatProto;
@@ -35,7 +36,6 @@ import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
 import org.apache.tajo.common.ProtoObject;
 import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.util.TUtil;
-import org.xerial.snappy.Snappy;
 
 import com.google.common.base.Objects;
 import com.google.gson.Gson;
@@ -57,10 +57,10 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
   private Long avgRows = null; // optional
   @Expose
   private List<ColumnStat> columnStats = null; // repeated
-  @Expose
-  private byte[] histogramBytes = null;
+  // @Expose
+  // private byte[] histogramBytes = null; // optional
 
-  private Map<Integer, Long> histogram = null; // repeated
+  private Map<Integer, Long> histogram = null;
 
   public TableStat() {
     numRows = 0l;
@@ -91,15 +91,19 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
     }
 
     if (proto.hasHistogram()) {
-      this.histogramBytes = proto.getHistogram().toByteArray();
+      byte[] histogramBytes = proto.getHistogram().toByteArray();
+
       // deserializing
       try {
-        ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(histogramBytes));
+        // ByteArrayInputStream byteIn = new
+        // ByteArrayInputStream(Snappy.uncompress(histogramBytes));
+        ByteArrayInputStream byteIn = new ByteArrayInputStream(histogramBytes);
         ObjectInputStream in = new ObjectInputStream(byteIn);
-        this.histogram = (Map<Integer, Long>) in.readObject();
+        this.histogram = (TreeMap<Integer, Long>) in.readObject();
       } catch (Exception e) {
         // TODO FIXME
         System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
+        e.printStackTrace();
       }
     }
 
@@ -221,18 +225,23 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
         builder.addColStat(colStat.getProto());
       }
     }
-    if (this.histogram != null) {
+    if (this.histogram != null && histogram.size() > 0) {
 
       // serializing
       try {
         ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
         ObjectOutputStream out = new ObjectOutputStream(byteOut);
-        out.writeObject(histogram);
-        builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+        out.writeObject((TreeMap) histogram);
+        // builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+        builder.setHistogram(ByteString.copyFrom(byteOut.toByteArray()));
       } catch (Exception e) {
         // TODO FIXME
         System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
+        e.printStackTrace();
       }
+
+      // builder.setHistogram(ByteString.copyFrom(histogramBytes));
+
     }
 
     return builder.build();
@@ -240,10 +249,37 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
 
   public Map<Integer, Long> getHistogram() {
     return histogram;
+
+    // if (histogramBytes != null) {
+    // // deserializing
+    // try {
+    // ByteArrayInputStream byteIn = new
+    // ByteArrayInputStream(Snappy.uncompress(histogramBytes));
+    // ObjectInputStream in = new ObjectInputStream(byteIn);
+    // return (TreeMap<Integer, Long>) in.readObject();
+    // } catch (Exception e) {
+    // // TODO FIXME
+    // System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
+    // }
+    // }
+    // return null;
   }
 
   public void setHistogram(Map<Integer, Long> histogram) {
     this.histogram = histogram;
+
+    // // serializing
+    // try {
+    // ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
+    // ObjectOutputStream out = new ObjectOutputStream(byteOut);
+    // out.writeObject(histogram);
+    // //
+    // builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+    // this.histogramBytes = Snappy.compress(byteOut.toByteArray());
+    // } catch (Exception e) {
+    // // TODO FIXME
+    // System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
+    // }
   }
 
 }
