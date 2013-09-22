@@ -35,7 +35,7 @@ import org.apache.tajo.datum.NullDatum;
  * This class is not thread-safe.
  */
 public class TableStatistics {
-  private final static int HISTOGRAM_GRANULARITY = 100;
+  private final static int HISTOGRAM_BASE_GRANULARITY = 100;
 
   private Schema schema;
   private Tuple minValues;
@@ -123,7 +123,7 @@ public class TableStatistics {
       }
 
       if (idx == schema.getColumnNum() - 1) {
-        int key = keyTuple.hashCode() + HISTOGRAM_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_GRANULARITY);
+        int key = keyTuple.hashCode() + HISTOGRAM_BASE_GRANULARITY - (keyTuple.hashCode() % HISTOGRAM_BASE_GRANULARITY);
 
         Long accumulated = histogram.get(key);
         if (accumulated != null) {
@@ -153,7 +153,33 @@ public class TableStatistics {
 
     stat.setNumRows(this.numRows);
     stat.setNumBytes(this.numBytes);
-    stat.setHistogram(this.histogram);
+
+    int histogramMaxSize = 10000;
+
+    // transform histogram
+    if (histogram.size() > histogramMaxSize) {
+
+      int multiplier = histogram.size() / histogramMaxSize;
+      int granularity = HISTOGRAM_BASE_GRANULARITY * multiplier;
+
+      Map<Integer, Long> newHistogram = new TreeMap<Integer, Long>();
+
+      for (Integer originalKey : histogram.keySet()) {
+        long value = histogram.get(originalKey);
+        int key = originalKey + granularity - (originalKey % granularity);
+
+        Long accumulated = newHistogram.get(key);
+        if (accumulated != null) {
+          newHistogram.put(key, accumulated + value);
+        } else {
+          newHistogram.put(key, value);
+        }
+
+      }
+      stat.setHistogram(newHistogram);
+    } else {
+      stat.setHistogram(this.histogram);
+    }
 
     return stat;
   }
