@@ -36,6 +36,7 @@ import org.apache.tajo.catalog.proto.CatalogProtos.TableStatProto;
 import org.apache.tajo.common.ProtoObject;
 import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.util.TUtil;
+import org.xerial.snappy.Snappy;
 
 import com.google.common.base.Objects;
 import com.google.gson.Gson;
@@ -95,9 +96,9 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
 
       // deserializing
       try {
+        ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(histogramBytes));
         // ByteArrayInputStream byteIn = new
-        // ByteArrayInputStream(Snappy.uncompress(histogramBytes));
-        ByteArrayInputStream byteIn = new ByteArrayInputStream(histogramBytes);
+        // ByteArrayInputStream(histogramBytes);
         ObjectInputStream in = new ObjectInputStream(byteIn);
         this.histogram = (TreeMap<Integer, Long>) in.readObject();
       } catch (Exception e) {
@@ -232,8 +233,8 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
         ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
         ObjectOutputStream out = new ObjectOutputStream(byteOut);
         out.writeObject((TreeMap) histogram);
-        // builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
-        builder.setHistogram(ByteString.copyFrom(byteOut.toByteArray()));
+        builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
+        // builder.setHistogram(ByteString.copyFrom(byteOut.toByteArray()));
       } catch (Exception e) {
         // TODO FIXME
         System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
