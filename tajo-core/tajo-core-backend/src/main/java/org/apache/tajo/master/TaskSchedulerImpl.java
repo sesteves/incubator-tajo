@@ -489,12 +489,6 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
     private List<Integer> getJoinKeys(ExecutionBlock executionBlock) {
       ExecutionBlock parent = executionBlock.getParentBlock();
 
-      if (parent == null) {
-        System.out.println("### Parent is null !!!");
-      } else {
-        System.out.println("### Getting join keys. " + ((UnaryNode) parent.getPlan()).getChild().getClass());
-      }
-
       if (parent != null && parent.hasJoin()) {
         JoinNode joinNode = (JoinNode) ((UnaryNode) parent.getPlan()).getChild();
         if (joinNode.getJoinType() == JoinType.INNER) {
@@ -536,17 +530,9 @@ public class TaskSchedulerImpl extends AbstractService implements TaskScheduler 
           ExecutionBlock executionBlock = context.getSubQuery(attemptId.getQueryUnitId().getExecutionBlockId())
               .getBlock();
 
-          System.out.println("### Logic node of current exec block: "
-              + ((UnaryNode) executionBlock.getPlan()).getClass());
-          System.out.println("### Logic node of current exec block child: "
-              + ((UnaryNode) executionBlock.getPlan()).getChild().getClass());
-
           if (executionBlock.hasJoin()) {
             LogicalNode child = ((UnaryNode) executionBlock.getPlan()).getChild();
             if (child instanceof JoinNode && ((JoinNode) child).getJoinType() == JoinType.INNER) {
-              JoinNode joinN = (JoinNode) child;
-              System.out.println("### " + joinN.getRightChild().getClass());
-
               taskAssign.setHistogram(executionBlock.getHistogram());
             }
           }

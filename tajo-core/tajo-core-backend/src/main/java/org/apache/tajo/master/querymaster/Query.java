@@ -356,6 +356,10 @@ public class Query implements EventHandler<QueryEvent> {
           return query.finished(QueryState.QUERY_SUCCEEDED);
         }
       } else {
+        histogramBytes = Long.MAX_VALUE;
+        histogram = null;
+        histogramCount = 0;
+
         // if at least one subquery is failed, the query is also failed.
         return QueryState.QUERY_FAILED;
       }

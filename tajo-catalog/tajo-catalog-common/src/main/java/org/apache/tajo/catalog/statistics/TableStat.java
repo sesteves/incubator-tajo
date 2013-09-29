@@ -58,8 +58,6 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
   private Long avgRows = null; // optional
   @Expose
   private List<ColumnStat> columnStats = null; // repeated
-  // @Expose
-  // private byte[] histogramBytes = null; // optional
 
   private Map<Integer, Long> histogram = null;
 
@@ -93,17 +91,13 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
 
     if (proto.hasHistogram()) {
       byte[] histogramBytes = proto.getHistogram().toByteArray();
-
       // deserializing
       try {
         ByteArrayInputStream byteIn = new ByteArrayInputStream(Snappy.uncompress(histogramBytes));
-        // ByteArrayInputStream byteIn = new
-        // ByteArrayInputStream(histogramBytes);
         ObjectInputStream in = new ObjectInputStream(byteIn);
         this.histogram = (TreeMap<Integer, Long>) in.readObject();
       } catch (Exception e) {
-        // TODO FIXME
-        System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
+        // TODO log exception
         e.printStackTrace();
       }
     }
@@ -227,22 +221,16 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
       }
     }
     if (this.histogram != null && histogram.size() > 0) {
-
       // serializing
       try {
         ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
         ObjectOutputStream out = new ObjectOutputStream(byteOut);
-        out.writeObject((TreeMap) histogram);
+        out.writeObject((TreeMap<Integer, Long>) histogram);
         builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
-        // builder.setHistogram(ByteString.copyFrom(byteOut.toByteArray()));
       } catch (Exception e) {
-        // TODO FIXME
-        System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
+        // TODO log exception
         e.printStackTrace();
       }
-
-      // builder.setHistogram(ByteString.copyFrom(histogramBytes));
-
     }
 
     return builder.build();
@@ -250,37 +238,10 @@ public class TableStat implements ProtoObject<TableStatProto>, Cloneable, GsonOb
 
   public Map<Integer, Long> getHistogram() {
     return histogram;
-
-    // if (histogramBytes != null) {
-    // // deserializing
-    // try {
-    // ByteArrayInputStream byteIn = new
-    // ByteArrayInputStream(Snappy.uncompress(histogramBytes));
-    // ObjectInputStream in = new ObjectInputStream(byteIn);
-    // return (TreeMap<Integer, Long>) in.readObject();
-    // } catch (Exception e) {
-    // // TODO FIXME
-    // System.out.println("EXCEPTION OCCURRED WHILE DESERIALIZING HISTOGRAM!");
-    // }
-    // }
-    // return null;
   }
 
   public void setHistogram(Map<Integer, Long> histogram) {
     this.histogram = histogram;
-
-    // // serializing
-    // try {
-    // ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
-    // ObjectOutputStream out = new ObjectOutputStream(byteOut);
-    // out.writeObject(histogram);
-    // //
-    // builder.setHistogram(ByteString.copyFrom(Snappy.compress(byteOut.toByteArray())));
-    // this.histogramBytes = Snappy.compress(byteOut.toByteArray());
-    // } catch (Exception e) {
-    // // TODO FIXME
-    // System.out.println("EXCEPTION OCCURRED WHILE SERIALIZING HISTOGRAM!");
-    // }
   }
 
 }

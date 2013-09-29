@@ -100,8 +100,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
   private Scanner outerScanner;
 
-  private long startTick;
-
   public HybridHashJoinExec(TaskAttemptContext context, JoinNode plan, PhysicalExec outer, PhysicalExec inner) {
     super(context, SchemaUtil.merge(outer.getSchema(), inner.getSchema()), plan.getOutSchema(), outer, inner);
 
@@ -142,12 +140,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
     Map<Integer, Long> histogram = context.getHistogram();
     if (histogram == null || histogram.size() == 0) {
       LOG.info("No histogram provided.");
-      // throw new IOException(
-      // "HybridHashJoinExec needs a histogram containing the distribution of the join keys of the inner relation.");
 
       histogram = new TreeMap<Integer, Long>();
-
-      // FIXME what if inner relation tuples exceed working memory ?
       histogram.put(Integer.MAX_VALUE, workingMemory);
     } else {
       LOG.info("Histogram size: " + histogram.size());
@@ -203,7 +197,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
   @Override
   public Tuple next() throws IOException {
     if (step == 1) {
-      startTick = System.currentTimeMillis();
       partitionHistogram();
       bucketInnerRelation();
       step++;
@@ -234,8 +227,6 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       while (true) {
         if (!hasTuples && !hasBuckets) {
           if (!bucketsMapIterator.hasNext()) {
-
-            System.out.println("#### DIFF TIME: " + (System.currentTimeMillis() - startTick));
             return null;
           }
           buckets = bucketsMap.get(bucketsMapIterator.next());
