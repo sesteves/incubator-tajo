@@ -19,6 +19,7 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -29,11 +30,11 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
-import org.apache.tajo.engine.planner.LogicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
-import org.apache.tajo.engine.planner.PlanningException;
+import org.apache.tajo.engine.planner.*;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
+import org.apache.tajo.engine.planner.logical.JoinNode;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
 import org.apache.tajo.util.TUtil;
@@ -43,6 +44,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 
+import static org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -53,7 +55,7 @@ public class TestHashJoinExec {
   private CatalogService catalog;
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
   private Path testDir;
 
   private TableDesc employee;
@@ -66,7 +68,7 @@ public class TestHashJoinExec {
     catalog = util.startCatalogCluster().getCatalog();
     testDir = CommonTestingUtil.getTestDir(TEST_PATH);
     conf = util.getConfiguration();
-    sm = StorageManager.get(conf, testDir);
+    sm = StorageManagerFactory.getStorageManager(conf, testDir);
 
     Schema employeeSchema = new Schema();
     employeeSchema.addColumn("managerId", Type.INT4);
@@ -77,7 +79,7 @@ public class TestHashJoinExec {
     TableMeta employeeMeta = CatalogUtil.newTableMeta(employeeSchema,
         StoreType.CSV);
     Path employeePath = new Path(testDir, "employee.csv");
-    Appender appender = StorageManager.getAppender(conf, employeeMeta, employeePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(employeeMeta, employeePath);
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
     for (int i = 0; i < 10; i++) {
@@ -99,7 +101,7 @@ public class TestHashJoinExec {
     peopleSchema.addColumn("age", Type.INT4);
     TableMeta peopleMeta = CatalogUtil.newTableMeta(peopleSchema, StoreType.CSV);
     Path peoplePath = new Path(testDir, "people.csv");
-    appender = StorageManager.getAppender(conf, peopleMeta, peoplePath);
+    appender = StorageManagerFactory.getStorageManager(conf).getAppender(peopleMeta, peoplePath);
     appender.init();
     tuple = new VTuple(peopleMeta.getSchema().getColumnNum());
     for (int i = 1; i < 10; i += 2) {
@@ -131,35 +133,27 @@ public class TestHashJoinExec {
 
   @Test
   public final void testHashInnerJoin() throws IOException, PlanningException {
-    Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
-        Integer.MAX_VALUE);
-    Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
-        Integer.MAX_VALUE);
+    Expr expr = analyzer.parse(QUERIES[0]);
+    LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
 
+    JoinNode joinNode = PlannerUtil.findTopNode(plan, NodeType.JOIN);
+    Enforcer enforcer = new Enforcer();
+    enforcer.enforceJoinAlgorithm(joinNode.getPID(), JoinAlgorithm.IN_MEMORY_HASH_JOIN);
+
+    Fragment[] empFrags = StorageManager.splitNG(conf, "e", employee.getMeta(), employee.getPath(), Integer.MAX_VALUE);
+    Fragment[] peopleFrags = StorageManager.splitNG(conf, "p", people.getMeta(), people.getPath(), Integer.MAX_VALUE);
     Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
 
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/testHashInnerJoin");
     TaskAttemptContext ctx = new TaskAttemptContext(conf,
-        TUtil.newQueryUnitAttemptId(), merged, workDir);
-    Expr expr = analyzer.parse(QUERIES[0]);
-    LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
+        LocalTajoTestingUtility.newQueryUnitAttemptId(), merged, workDir);
+    ctx.setEnforcer(enforcer);
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf, sm);
     PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
 
     ProjectionExec proj = (ProjectionExec) exec;
-    if (proj.getChild() instanceof MergeJoinExec) {
-      MergeJoinExec join = (MergeJoinExec) proj.getChild();
-      ExternalSortExec sortout = (ExternalSortExec) join.getLeftChild();
-      ExternalSortExec sortin = (ExternalSortExec) join.getRightChild();
-      SeqScanExec scanout = (SeqScanExec) sortout.getChild();
-      SeqScanExec scanin = (SeqScanExec) sortin.getChild();
-
-      HashJoinExec hashjoin = new HashJoinExec(ctx, join.getPlan(), scanout, scanin);
-      proj.setChild(hashjoin);
-
-      exec = proj;
-    }
+    assertTrue(proj.getChild() instanceof HashJoinExec);
 
     Tuple tuple;
     int count = 0;

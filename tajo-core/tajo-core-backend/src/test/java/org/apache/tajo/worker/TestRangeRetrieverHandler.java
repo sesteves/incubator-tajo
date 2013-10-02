@@ -23,6 +23,7 @@ import com.google.common.collect.Maps;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -35,14 +36,10 @@ import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.*;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
-import org.apache.tajo.engine.planner.physical.ExternalSortExec;
-import org.apache.tajo.engine.planner.physical.IndexedStoreExec;
-import org.apache.tajo.engine.planner.physical.PhysicalExec;
-import org.apache.tajo.engine.planner.physical.ProjectionExec;
+import org.apache.tajo.engine.planner.physical.*;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.index.bst.BSTIndex;
 import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.TUtil;
 import org.apache.tajo.worker.dataserver.retriever.FileChunk;
 import org.junit.After;
 import org.junit.Before;
@@ -64,7 +61,7 @@ public class TestRangeRetrieverHandler {
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
   private LogicalOptimizer optimizer;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
   private Schema schema;
   private static int TEST_TUPLE = 10000;
   private FileSystem fs;
@@ -78,7 +75,7 @@ public class TestRangeRetrieverHandler {
     fs = testDir.getFileSystem(conf);
     util.startCatalogCluster();
     catalog = util.getMiniCatalogCluster().getCatalog();
-    sm = StorageManager.get(conf, testDir);
+    sm = StorageManagerFactory.getStorageManager(conf, testDir);
 
     analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
@@ -108,7 +105,7 @@ public class TestRangeRetrieverHandler {
 
     Path tableDir = StorageUtil.concatPath(testDir, "testGet", "table.csv");
     fs.mkdirs(tableDir.getParent());
-    Appender appender = sm.getAppender(conf, employeeMeta, tableDir);
+    Appender appender = sm.getAppender(employeeMeta, tableDir);
     appender.init();
 
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
@@ -134,7 +131,7 @@ public class TestRangeRetrieverHandler {
     Fragment[] frags = StorageManager.splitNG(conf, "employee", employeeMeta, tableDir, Integer.MAX_VALUE);
 
     TaskAttemptContext
-        ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(),
+        ctx = new TaskAttemptContext(conf, LocalTajoTestingUtility.newQueryUnitAttemptId(),
         new Fragment[] {frags[0]}, testDir);
     Expr expr = analyzer.parse(SORT_QUERY[0]);
     LogicalPlan plan = planner.createPlan(expr);
@@ -144,7 +141,7 @@ public class TestRangeRetrieverHandler {
     PhysicalExec exec = phyPlanner.createPlan(ctx, rootNode);
 
     ProjectionExec proj = (ProjectionExec) exec;
-    ExternalSortExec sort = (ExternalSortExec) proj.getChild();
+    MemSortExec sort = (MemSortExec) proj.getChild();
 
     SortSpec[] sortSpecs = sort.getPlan().getSortKeys();
     IndexedStoreExec idxStoreExec = new IndexedStoreExec(ctx, sm, sort, sort.getSchema(),
@@ -161,8 +158,10 @@ public class TestRangeRetrieverHandler {
     BSTIndex.BSTIndexReader reader = bst.getIndexReader(
         new Path(testDir, "output/index"), keySchema, comp);
     reader.open();
-    SeekableScanner scanner = (SeekableScanner)
-        sm.getScanner(conf, employeeMeta, StorageUtil.concatPath(testDir, "output", "output"));
+
+    SeekableScanner scanner = StorageManagerFactory.getSeekableScanner(conf, employeeMeta,
+        StorageUtil.concatPath(testDir, "output", "output"));
+
     scanner.init();
     int cnt = 0;
     while(scanner.next() != null) {
@@ -220,7 +219,7 @@ public class TestRangeRetrieverHandler {
     TableMeta meta = CatalogUtil.newTableMeta(schema, StoreType.CSV);
     Path tablePath = StorageUtil.concatPath(testDir, "testGetFromDescendingOrder", "table.csv");
     fs.mkdirs(tablePath.getParent());
-    Appender appender = sm.getAppender(conf, meta, tablePath);
+    Appender appender = sm.getAppender(meta, tablePath);
     appender.init();
     Tuple tuple = new VTuple(meta.getSchema().getColumnNum());
     for (int i = (TEST_TUPLE - 1); i >= 0 ; i--) {
@@ -245,7 +244,7 @@ public class TestRangeRetrieverHandler {
     Fragment[] frags = sm.splitNG(conf, "employee", meta, tablePath, Integer.MAX_VALUE);
 
     TaskAttemptContext
-        ctx = new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(),
+        ctx = new TaskAttemptContext(conf, LocalTajoTestingUtility.newQueryUnitAttemptId(),
         new Fragment[] {frags[0]}, testDir);
     Expr expr = analyzer.parse(SORT_QUERY[1]);
     LogicalPlan plan = planner.createPlan(expr);
@@ -255,7 +254,7 @@ public class TestRangeRetrieverHandler {
     PhysicalExec exec = phyPlanner.createPlan(ctx, rootNode);
 
     ProjectionExec proj = (ProjectionExec) exec;
-    ExternalSortExec sort = (ExternalSortExec) proj.getChild();
+    MemSortExec sort = (MemSortExec) proj.getChild();
     SortSpec[] sortSpecs = sort.getPlan().getSortKeys();
     IndexedStoreExec idxStoreExec = new IndexedStoreExec(ctx, sm, sort,
         sort.getSchema(), sort.getSchema(), sortSpecs);
@@ -271,8 +270,8 @@ public class TestRangeRetrieverHandler {
     BSTIndex.BSTIndexReader reader = bst.getIndexReader(
         new Path(testDir, "output/index"), keySchema, comp);
     reader.open();
-    SeekableScanner scanner = (SeekableScanner) StorageManager.getScanner(
-        conf, meta, StorageUtil.concatPath(testDir, "output", "output"));
+    SeekableScanner scanner = StorageManagerFactory.getSeekableScanner(conf, meta,
+        StorageUtil.concatPath(testDir, "output", "output"));
     scanner.init();
     int cnt = 0;
     while(scanner.next() != null) {

@@ -19,6 +19,7 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -30,6 +31,7 @@ import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.*;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
@@ -51,7 +53,7 @@ public class TestHashSemiJoinExec {
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
   private LogicalOptimizer optimizer;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
   private Path testDir;
 
   private TableDesc employee;
@@ -64,7 +66,7 @@ public class TestHashSemiJoinExec {
     catalog = util.startCatalogCluster().getCatalog();
     testDir = CommonTestingUtil.getTestDir(TEST_PATH);
     conf = util.getConfiguration();
-    sm = StorageManager.get(conf, testDir);
+    sm = StorageManagerFactory.getStorageManager(conf, testDir);
 
     Schema employeeSchema = new Schema();
     employeeSchema.addColumn("managerId", Type.INT4);
@@ -75,7 +77,7 @@ public class TestHashSemiJoinExec {
     TableMeta employeeMeta = CatalogUtil.newTableMeta(employeeSchema,
         StoreType.CSV);
     Path employeePath = new Path(testDir, "employee.csv");
-    Appender appender = StorageManager.getAppender(conf, employeeMeta, employeePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(employeeMeta, employeePath);
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
 
@@ -100,7 +102,7 @@ public class TestHashSemiJoinExec {
     peopleSchema.addColumn("age", Type.INT4);
     TableMeta peopleMeta = CatalogUtil.newTableMeta(peopleSchema, StoreType.CSV);
     Path peoplePath = new Path(testDir, "people.csv");
-    appender = StorageManager.getAppender(conf, peopleMeta, peoplePath);
+    appender = StorageManagerFactory.getStorageManager(conf).getAppender(peopleMeta, peoplePath);
     appender.init();
     tuple = new VTuple(peopleMeta.getSchema().getColumnNum());
     // make 27 tuples
@@ -142,19 +144,21 @@ public class TestHashSemiJoinExec {
 
   @Test
   public final void testHashSemiJoin() throws IOException, PlanningException {
-    Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
+    Fragment[] empFrags = StorageManager.splitNG(conf, "e", employee.getMeta(), employee.getPath(),
         Integer.MAX_VALUE);
-    Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
+    Fragment[] peopleFrags = StorageManager.splitNG(conf, "p", people.getMeta(), people.getPath(),
         Integer.MAX_VALUE);
 
     Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
 
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/testHashSemiJoin");
     TaskAttemptContext ctx = new TaskAttemptContext(conf,
-        TUtil.newQueryUnitAttemptId(), merged, workDir);
+        LocalTajoTestingUtility.newQueryUnitAttemptId(), merged, workDir);
+    ctx.setEnforcer(new Enforcer());
     Expr expr = analyzer.parse(QUERIES[0]);
     LogicalPlan plan = planner.createPlan(expr);
     optimizer.optimize(plan);
+    System.out.println(plan);
     LogicalNode rootNode = plan.getRootBlock().getRoot();
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf, sm);

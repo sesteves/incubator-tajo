@@ -41,11 +41,11 @@ public class TableStatistics {
   private Schema schema;
   private Tuple minValues;
   private Tuple maxValues;
-  private long[] numNulls;
+  private long [] numNulls;
   private long numRows = 0;
   private long numBytes = 0;
 
-  private boolean[] comparable;
+  private boolean [] comparable;
 
   private List<Integer> joinKeys;
 
@@ -57,14 +57,11 @@ public class TableStatistics {
 
   private int keyTupleIdx = 0;
 
+
   public TableStatistics(Schema schema) {
     this.schema = schema;
     minValues = new VTuple(schema.getColumnNum());
     maxValues = new VTuple(schema.getColumnNum());
-    /*
-     * for (int i = 0; i < schema.getColumnNum(); i++) { minValues[i] =
-     * Long.MAX_VALUE; maxValues[i] = Long.MIN_VALUE; }
-     */
 
     numNulls = new long[schema.getColumnNum()];
     comparable = new boolean[schema.getColumnNum()];
@@ -108,10 +105,12 @@ public class TableStatistics {
 
     if (datum.type() != TajoDataTypes.Type.ARRAY) {
       if (comparable[idx]) {
-        if (!maxValues.contains(idx) || maxValues.get(idx).compareTo(datum) < 0) {
+        if (!maxValues.contains(idx) ||
+            maxValues.get(idx).compareTo(datum) < 0) {
           maxValues.put(idx, datum);
         }
-        if (!minValues.contains(idx) || minValues.get(idx).compareTo(datum) > 0) {
+        if (!minValues.contains(idx) ||
+            minValues.get(idx).compareTo(datum) > 0) {
           minValues.put(idx, datum);
         }
       }

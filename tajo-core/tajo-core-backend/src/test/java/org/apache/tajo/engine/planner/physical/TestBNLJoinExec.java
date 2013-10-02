@@ -19,6 +19,7 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -29,12 +30,11 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
-import org.apache.tajo.engine.planner.LogicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
-import org.apache.tajo.engine.planner.PlanningException;
+import org.apache.tajo.engine.planner.*;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.engine.planner.logical.JoinNode;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
 import org.apache.tajo.util.TUtil;
@@ -44,17 +44,18 @@ import org.junit.Test;
 
 import java.io.IOException;
 
+import static org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class TestBNLJoinExec {
   private TajoConf conf;
-  private final String TEST_PATH = "target/test-data/TestNLJoinExec";
+  private final String TEST_PATH = "target/test-data/TestBNLJoinExec";
   private TajoTestingCluster util;
   private CatalogService catalog;
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
   private Path testDir;
 
   private static int OUTER_TUPLE_NUM = 1000;
@@ -69,7 +70,7 @@ public class TestBNLJoinExec {
     catalog = util.startCatalogCluster().getCatalog();
     testDir = CommonTestingUtil.getTestDir(TEST_PATH);
     conf = util.getConfiguration();
-    sm = StorageManager.get(conf, testDir);
+    sm = StorageManagerFactory.getStorageManager(conf, testDir);
 
     Schema schema = new Schema();
     schema.addColumn("managerId", Type.INT4);
@@ -79,7 +80,7 @@ public class TestBNLJoinExec {
 
     TableMeta employeeMeta = CatalogUtil.newTableMeta(schema, StoreType.CSV);
     Path employeePath = new Path(testDir, "employee.csv");
-    Appender appender = StorageManager.getAppender(conf, employeeMeta, employeePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(employeeMeta, employeePath);
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
     for (int i = 0; i < OUTER_TUPLE_NUM; i++) {
@@ -100,7 +101,7 @@ public class TestBNLJoinExec {
     peopleSchema.addColumn("age", Type.INT4);
     TableMeta peopleMeta = CatalogUtil.newTableMeta(peopleSchema, StoreType.CSV);
     Path peoplePath = new Path(testDir, "people.csv");
-    appender = StorageManager.getAppender(conf, peopleMeta, peoplePath);
+    appender = StorageManagerFactory.getStorageManager(conf).getAppender(peopleMeta, peoplePath);
     appender.init();
     tuple = new VTuple(peopleMeta.getSchema().getColumnNum());
     for (int i = 1; i < INNER_TUPLE_NUM; i += 2) {
@@ -124,36 +125,36 @@ public class TestBNLJoinExec {
     util.shutdownCatalogCluster();
   }
 
+  // employee (managerId, empId, memId, deptName)
+  // people (empId, fk_memId, name, age)
   String[] QUERIES = {
-      "select managerId, e.empId, deptName, e.memId from employee as e, people",
+      "select managerId, e.empId, deptName, e.memId from employee as e, people p",
       "select managerId, e.empId, deptName, e.memId from employee as e " +
           "inner join people as p on e.empId = p.empId and e.memId = p.fk_memId" };
 
   @Test
   public final void testBNLCrossJoin() throws IOException, PlanningException {
-    Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
-        Integer.MAX_VALUE);
-    Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
-        Integer.MAX_VALUE);
-
-    Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
-
-    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testBNLCrossJoin");
-    TaskAttemptContext ctx = new TaskAttemptContext(conf,
-        TUtil.newQueryUnitAttemptId(), merged, workDir);
     Expr expr = analyzer.parse(QUERIES[0]);
     LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
+    JoinNode joinNode = PlannerUtil.findTopNode(plan, NodeType.JOIN);
+    Enforcer enforcer = new Enforcer();
+    enforcer.enforceJoinAlgorithm(joinNode.getPID(), JoinAlgorithm.BLOCK_NESTED_LOOP_JOIN);
+
+    Fragment[] empFrags = StorageManager.splitNG(conf, "e", employee.getMeta(), employee.getPath(),
+        Integer.MAX_VALUE);
+    Fragment[] peopleFrags = StorageManager.splitNG(conf, "p", people.getMeta(), people.getPath(),
+        Integer.MAX_VALUE);
+    Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
+    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testBNLCrossJoin");
+    TaskAttemptContext ctx = new TaskAttemptContext(conf,
+        LocalTajoTestingUtility.newQueryUnitAttemptId(), merged, workDir);
+    ctx.setEnforcer(enforcer);
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf,sm);
     PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
 
     ProjectionExec proj = (ProjectionExec) exec;
-    NLJoinExec nlJoin = (NLJoinExec) proj.getChild();
-    SeqScanExec scanOuter = (SeqScanExec) nlJoin.getLeftChild();
-    SeqScanExec scanInner = (SeqScanExec) nlJoin.getRightChild();
-
-    BNLJoinExec bnl = new BNLJoinExec(ctx, nlJoin.getPlan(), scanOuter, scanInner);
-    proj.setChild(bnl);
+    assertTrue(proj.getChild() instanceof BNLJoinExec);
 
     int i = 0;
     exec.init();
@@ -166,45 +167,31 @@ public class TestBNLJoinExec {
 
   @Test
   public final void testBNLInnerJoin() throws IOException, PlanningException {
-    Fragment[] empFrags = StorageManager.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
-        Integer.MAX_VALUE);
-    Fragment[] peopleFrags = StorageManager.splitNG(conf, "people", people.getMeta(), people.getPath(),
-        Integer.MAX_VALUE);
-
-    Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
-
-    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testBNLInnerJoin");
-    TaskAttemptContext ctx =
-        new TaskAttemptContext(conf, TUtil.newQueryUnitAttemptId(),
-            merged, workDir);
     Expr context = analyzer.parse(QUERIES[1]);
     LogicalNode plan = planner.createPlan(context).getRootBlock().getRoot();
+
+    Fragment[] empFrags = StorageManager.splitNG(conf, "e", employee.getMeta(), employee.getPath(),
+        Integer.MAX_VALUE);
+    Fragment[] peopleFrags = StorageManager.splitNG(conf, "p", people.getMeta(), people.getPath(),
+        Integer.MAX_VALUE);
+    Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
+
+
+    JoinNode joinNode = PlannerUtil.findTopNode(plan, NodeType.JOIN);
+    Enforcer enforcer = new Enforcer();
+    enforcer.enforceJoinAlgorithm(joinNode.getPID(), JoinAlgorithm.BLOCK_NESTED_LOOP_JOIN);
+
+    Path workDir = CommonTestingUtil.getTestDir("target/test-data/testBNLInnerJoin");
+    TaskAttemptContext ctx = new TaskAttemptContext(conf, LocalTajoTestingUtility.newQueryUnitAttemptId(),
+        merged, workDir);
+    ctx.setEnforcer(enforcer);
+
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf,sm);
     PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
 
-    SeqScanExec scanOuter = null;
-    SeqScanExec scanInner = null;
-
     ProjectionExec proj = (ProjectionExec) exec;
-    JoinNode joinNode = null;
-    if (proj.getChild() instanceof MergeJoinExec) {
-      MergeJoinExec join = (MergeJoinExec) proj.getChild();
-      ExternalSortExec sortOut = (ExternalSortExec) join.getLeftChild();
-      ExternalSortExec sortIn = (ExternalSortExec) join.getRightChild();
-      scanOuter = (SeqScanExec) sortOut.getChild();
-      scanInner = (SeqScanExec) sortIn.getChild();
-      joinNode = join.getPlan();
-    } else if (proj.getChild() instanceof HashJoinExec) {
-      HashJoinExec join = (HashJoinExec) proj.getChild();
-      scanOuter = (SeqScanExec) join.getLeftChild();
-      scanInner = (SeqScanExec) join.getRightChild();
-      joinNode = join.getPlan();
-    }
-
-    BNLJoinExec bnl = new BNLJoinExec(ctx, joinNode, scanOuter,
-        scanInner);
-    proj.setChild(bnl);
+    assertTrue(proj.getChild() instanceof BNLJoinExec);
 
     Tuple tuple;
     int i = 1;

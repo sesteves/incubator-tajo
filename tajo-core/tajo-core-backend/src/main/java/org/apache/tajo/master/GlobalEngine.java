@@ -49,13 +49,12 @@ import org.apache.tajo.ipc.ClientProtos;
 import org.apache.tajo.master.TajoMaster.MasterContext;
 import org.apache.tajo.master.querymaster.QueryInfo;
 import org.apache.tajo.master.querymaster.QueryJobManager;
-import org.apache.tajo.storage.StorageManager;
+import org.apache.tajo.storage.AbstractStorageManager;
 import org.apache.tajo.storage.StorageUtil;
 
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 
 import static org.apache.tajo.ipc.ClientProtos.GetQueryStatusResponse;
@@ -65,7 +64,7 @@ public class GlobalEngine extends AbstractService {
   private final static Log LOG = LogFactory.getLog(GlobalEngine.class);
 
   private final MasterContext context;
-  private final StorageManager sm;
+  private final AbstractStorageManager sm;
 
   private SQLAnalyzer analyzer;
   private HiveConverter converter;
@@ -108,6 +107,7 @@ public class GlobalEngine extends AbstractService {
       UnknownWorkerException, EmptyClusterException {
 
     LOG.info("SQL: " + sql);
+    QueryContext queryContext = new QueryContext();
 
     try {
       // setting environment variables
@@ -127,10 +127,14 @@ public class GlobalEngine extends AbstractService {
       final boolean hiveQueryMode = context.getConf().getBoolVar(TajoConf.ConfVars.HIVE_QUERY_MODE);
       LOG.info("hive.query.mode:" + hiveQueryMode);
 
+      if (hiveQueryMode) {
+        queryContext.setHiveQueryMode();
+      }
+
       Expr planningContext = hiveQueryMode ? converter.parse(sql) : analyzer.parse(sql);
       
       LogicalPlan plan = createLogicalPlan(planningContext);
-      LogicalRootNode rootNode = (LogicalRootNode) plan.getRootBlock().getRoot();
+      LogicalRootNode rootNode = plan.getRootBlock().getRoot();
 
       GetQueryStatusResponse.Builder responseBuilder = GetQueryStatusResponse.newBuilder();
       if (PlannerUtil.checkIfDDLPlan(rootNode)) {
@@ -139,7 +143,6 @@ public class GlobalEngine extends AbstractService {
         responseBuilder.setResultCode(ClientProtos.ResultCode.OK);
         responseBuilder.setState(TajoProtos.QueryState.QUERY_SUCCEEDED);
       } else {
-        QueryContext queryContext = new QueryContext();
         hookManager.doHooks(queryContext, plan);
 
         QueryJobManager queryJobManager = this.context.getQueryJobManager();
@@ -300,7 +303,7 @@ public class GlobalEngine extends AbstractService {
     void hook(QueryContext queryContext, LogicalPlan plan) throws Exception;
   }
 
-  public class DistributedQueryHookManager {
+  public static class DistributedQueryHookManager {
     private List<DistributedQueryHook> hooks = new ArrayList<DistributedQueryHook>();
     public void addHook(DistributedQueryHook hook) {
       hooks.add(hook);
@@ -319,7 +322,7 @@ public class GlobalEngine extends AbstractService {
     }
   }
 
-  private class CreateTableHook implements DistributedQueryHook {
+  public class CreateTableHook implements DistributedQueryHook {
 
     @Override
     public boolean isEligible(QueryContext queryContext, LogicalPlan plan) {
@@ -341,7 +344,7 @@ public class GlobalEngine extends AbstractService {
     }
   }
 
-  private class InsertHook implements DistributedQueryHook {
+  public static class InsertHook implements DistributedQueryHook {
 
     @Override
     public boolean isEligible(QueryContext queryContext, LogicalPlan plan) {
@@ -370,7 +373,8 @@ public class GlobalEngine extends AbstractService {
         queryContext.setFileOutput();
       }
 
-      storeNode = new StoreTableNode(outputTableName);
+      storeNode = new StoreTableNode(plan.newPID(), outputTableName);
+      storeNode.setOptions(new Options());
       queryContext.setOutputPath(outputPath);
 
       if (insertNode.isOverwrite()) {
@@ -385,6 +389,8 @@ public class GlobalEngine extends AbstractService {
       Schema subQueryOutSchema = subQuery.getOutSchema();
 
       if (insertNode.hasTargetTable()) { // if a target table is given, it computes the proper schema.
+        storeNode.getOptions().putAll(insertNode.getTargetTable().getMeta().getOptions());
+
         Schema targetTableSchema = insertNode.getTargetTable().getMeta().getSchema();
         Schema targetProjectedSchema = insertNode.getTargetSchema();
 
@@ -413,13 +419,11 @@ public class GlobalEngine extends AbstractService {
         }
 
 
-        ProjectionNode projectionNode = new ProjectionNode(targets);
+        ProjectionNode projectionNode = new ProjectionNode(plan.newPID(), targets);
         projectionNode.setInSchema(insertNode.getSubQuery().getOutSchema());
         projectionNode.setOutSchema(PlannerUtil.targetToSchema(targets));
-        Collection<QueryBlockGraph.BlockEdge> edges = plan.getConnectedBlocks(LogicalPlan.ROOT_BLOCK);
-        LogicalPlan.QueryBlock block = plan.getBlock(edges.iterator().next().getTargetBlock());
-        projectionNode.setChild(block.getRoot());
-
+        List<LogicalPlan.QueryBlock> blocks = plan.getChildBlocks(plan.getRootBlock());
+        projectionNode.setChild(blocks.get(0).getRoot());
 
         storeNode.setOutSchema(projectionNode.getOutSchema());
         storeNode.setInSchema(projectionNode.getOutSchema());
@@ -427,17 +431,15 @@ public class GlobalEngine extends AbstractService {
       } else {
         storeNode.setOutSchema(subQueryOutSchema);
         storeNode.setInSchema(subQueryOutSchema);
-        Collection<QueryBlockGraph.BlockEdge> edges = plan.getConnectedBlocks(LogicalPlan.ROOT_BLOCK);
-        LogicalPlan.QueryBlock block = plan.getBlock(edges.iterator().next().getTargetBlock());
-        storeNode.setChild(block.getRoot());
+        List<LogicalPlan.QueryBlock> childBlocks = plan.getChildBlocks(plan.getRootBlock());
+        storeNode.setChild(childBlocks.get(0).getRoot());
       }
 
-      storeNode.setListPartition();
       if (insertNode.hasStorageType()) {
         storeNode.setStorageType(insertNode.getStorageType());
       }
       if (insertNode.hasOptions()) {
-        storeNode.setOptions(insertNode.getOptions());
+        storeNode.getOptions().putAll(insertNode.getOptions());
       }
 
       // find a subquery query of insert node and merge root block and subquery into one query block.

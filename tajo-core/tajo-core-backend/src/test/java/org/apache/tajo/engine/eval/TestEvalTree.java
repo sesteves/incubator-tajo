@@ -22,7 +22,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.catalog.*;
-import org.apache.tajo.catalog.function.GeneralFunction;
+import org.apache.tajo.engine.function.GeneralFunction;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.DataType;
@@ -57,7 +57,7 @@ public class TestEvalTree {
     util.startCatalogCluster();
     cat = util.getMiniCatalogCluster().getCatalog();
     for (FunctionDesc funcDesc : TajoMaster.initBuiltinFunctions()) {
-      cat.registerFunction(funcDesc);
+      cat.createFunction(funcDesc);
     }
 
     Schema schema = new Schema();
@@ -72,7 +72,7 @@ public class TestEvalTree {
     FunctionDesc funcMeta = new FunctionDesc("test_sum", TestSum.class, FunctionType.GENERAL,
         CatalogUtil.newDataTypesWithoutLen(INT4),
         CatalogUtil.newDataTypesWithoutLen(INT4, INT4));
-    cat.registerFunction(funcMeta);
+    cat.createFunction(funcMeta);
 
     analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(cat);
@@ -128,7 +128,7 @@ public class TestEvalTree {
   public static Target[] getRawTargets(String query) throws PlanningException {
     Expr expr = analyzer.parse(query);
     LogicalPlan plan = planner.createPlan(expr);
-    Target [] targets = plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
+    Target [] targets = plan.getRootBlock().getTargetListManager().getUnresolvedTargets();
     for (Target t : targets) {
       assertJsonSerDer(t.getEvalTree());
     }
@@ -624,6 +624,7 @@ public class TestEvalTree {
     "select name, score, age from people where name like '%bc'", // 0"
     "select name, score, age from people where name like 'aa%'", // 1"
     "select name, score, age from people where name not like '%bc'", // 2"
+    "select name, score, age from people where name like '.*b_'", // 3"
   };
   
   @Test
@@ -631,6 +632,7 @@ public class TestEvalTree {
     EvalNode expr;
 
     Schema peopleSchema = cat.getTableDesc("people").getMeta().getSchema();
+    // prefix
     expr = getRootSelection(LIKE[0]);
     EvalContext evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
@@ -640,7 +642,7 @@ public class TestEvalTree {
     expr.eval(evalCtx, peopleSchema, tuples[2]);
     assertTrue(expr.terminate(evalCtx).asBool());
     
-    // prefix
+    // suffix
     expr = getRootSelection(LIKE[1]);
     evalCtx = expr.newContext();
     expr.eval(evalCtx, peopleSchema, tuples[0]);
@@ -714,7 +716,6 @@ public class TestEvalTree {
 
   private static void assertJsonSerDer(EvalNode expr) {
     String json = expr.toJson();
-    System.out.println(json);
     EvalNode fromJson = CoreGsonHelper.fromJson(json, EvalNode.class);
     assertEquals(expr, fromJson);
   }

@@ -56,6 +56,11 @@ public class BooleanDatum extends Datum {
   public void setValue(boolean val) {
     this.val = val;
   }
+
+  @Override
+  public char asChar() {
+    return val ? 't' : 'f';
+  }
 	
 	@Override
 	public short asInt2() {
@@ -117,7 +122,7 @@ public class BooleanDatum extends Datum {
 	 */
 	@Override
 	public String asChars() {
-		return val ? "true" : "false";
+		return val ? "t" : "f";
 	}
 
   @Override

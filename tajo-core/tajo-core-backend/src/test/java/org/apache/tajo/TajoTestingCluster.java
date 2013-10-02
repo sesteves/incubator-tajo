@@ -28,6 +28,8 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.util.ShutdownHookManager;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
@@ -44,7 +46,6 @@ import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.worker.TajoWorker;
 
 import java.io.*;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URL;
 import java.sql.ResultSet;
@@ -175,7 +176,8 @@ public class TajoTestingCluster {
     System.setProperty(MiniDFSCluster.PROP_TEST_BUILD_DATA,
         this.clusterTestBuildDir.toString());
 
-    MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(conf);
+    conf.setInt(DFSConfigKeys.DFS_REPLICATION_KEY, 1);
+    MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(new HdfsConfiguration(conf));
     builder.hosts(hosts);
     builder.numDataNodes(servers);
     builder.format(true);
@@ -188,6 +190,8 @@ public class TajoTestingCluster {
     this.conf.set("fs.defaultFS", defaultFS.getUri().toString());
     // Do old style too just to be safe.
     this.conf.set("fs.default.name", defaultFS.getUri().toString());
+
+    this.conf.set(TajoConf.ConfVars.ROOT_DIR.name(), defaultFS.getUri() + "/tajo");
 
     return this.dfsCluster;
   }

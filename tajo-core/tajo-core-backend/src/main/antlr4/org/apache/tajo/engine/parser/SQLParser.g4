@@ -52,7 +52,7 @@ predefined_type
 
 character_string_type
   : CHARACTER type_length?
-  | CHAR type_length?  |
+  | CHAR type_length?
   | CHARACTER VARYING type_length?
   | CHAR VARYING type_length?
   | VARCHAR type_length?
@@ -593,6 +593,10 @@ null_ordering
 */
 
 boolean_value_expression
+  : or_predicate (CAST_EXPRESSION data_type)?
+  ;
+
+or_predicate
   : and_predicate (OR and_predicate)*
   ;
 
@@ -633,7 +637,7 @@ boolean_primary
 predicate
   : comparison_predicate
   | in_predicate
-  | like_predicate
+  | pattern_matching_predicate
   | null_predicate
   ;
 
@@ -681,14 +685,34 @@ in_value_list
 
 /*
 ===============================================================================
-  <like_predicate>
+  <pattern_matching_predicate>
 
-  Specify a pattern-match comparison.
+  Specify a pattern-matching comparison.
 ===============================================================================
 */
 
-like_predicate
-  : f=column_reference NOT? LIKE s=Character_String_Literal
+pattern_matching_predicate
+  : f=numeric_primary pattern_matcher s=Character_String_Literal
+  ;
+
+pattern_matcher
+  : NOT? negativable_matcher
+  | regex_matcher
+  ;
+
+negativable_matcher
+  : LIKE
+  | ILIKE
+  | SIMILAR TO
+  | REGEXP
+  | RLIKE
+  ;
+
+regex_matcher
+  : Similar_To
+  | Not_Similar_To
+  | Similar_To_Case_Insensitive
+  | Not_Similar_To_Case_Insensitive
   ;
 
 /*
@@ -759,7 +783,11 @@ numeric_value_expression
   ;
 
 term
-  : left=numeric_primary ((MULTIPLY|DIVIDE|MODULAR) right=numeric_primary)*
+  : left=concatenatable_term ((MULTIPLY|DIVIDE|MODULAR) right=concatenatable_term)*
+  ;
+
+concatenatable_term
+  : left=numeric_primary (CONCATENATION_OPERATOR right=numeric_primary)*
   ;
 
 array
@@ -772,18 +800,20 @@ numeric_primary
   | set_function_specification
   | routine_invocation
   | scalar_subquery
+  | cast_specification
   | LEFT_PAREN numeric_value_expression RIGHT_PAREN
   ;
 
 literal
-  : string_value_expr
+  : string_value_expression
   | signed_numerical_literal
   | NULL
   ;
 
-string_value_expr
+string_value_expression
   : Character_String_Literal
   ;
+
 
 signed_numerical_literal
   : sign? unsigned_numerical_literal
@@ -838,4 +868,22 @@ else_clause
 
 result
   : numeric_value_expression | NULL
+  ;
+
+/*
+===============================================================================
+  cast_specification
+===============================================================================
+*/
+
+cast_specification
+  : CAST LEFT_PAREN cast_operand AS cast_target RIGHT_PAREN
+  ;
+
+cast_operand
+  : boolean_value_expression
+  ;
+
+cast_target
+  : data_type
   ;

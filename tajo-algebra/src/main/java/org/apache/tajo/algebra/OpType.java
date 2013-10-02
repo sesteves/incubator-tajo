@@ -27,6 +27,7 @@ public enum OpType {
   // relational operators
   Relation(Relation.class),
   RelationList(RelationList.class),
+  Rename,
   TableSubQuery(TableSubQuery.class),
   Except(SetOperation.class),
   Having(Having.class),
@@ -34,7 +35,6 @@ public enum OpType {
   Intersect(SetOperation.class),
   Join(Join.class),
   Projection(Projection.class),
-  Rename,
   Filter(Selection.class),
   Sort(Sort.class),
   Union(SetOperation.class),
@@ -64,9 +64,14 @@ public enum OpType {
   CaseWhen(CaseWhenPredicate.class),
   IsNullPredicate(IsNullPredicate.class),
   InPredicate(InPredicate.class),
-  LikePredicate(LikePredicate.class),
   ValueList(ValueListExpr.class),
   Is,
+
+  // string operator or pattern matching predicates
+  LikePredicate(PatternMatchPredicate.class),
+  SimilarToPredicate(PatternMatchPredicate.class),
+  Regexp(PatternMatchPredicate.class),
+  Concatenate(BinaryOperator.class),
 
   // arithmetic operators
   Plus(BinaryOperator.class),
@@ -84,9 +89,11 @@ public enum OpType {
   CountRowsFunction(CountRowsFunctionExpr.class),
   GeneralSetFunction(GeneralSetFunctionExpr.class),
 
+  Cast(CastExpr.class),
+  ScalarSubQuery(ScalarSubQuery.class),
   Literal(LiteralValue.class),
   Null(NullValue.class),
-  ScalarSubQuery(ScalarSubQuery.class);
+  DataType(org.apache.tajo.algebra.DataType.class);
 
   private Class baseClass;
 

@@ -24,6 +24,7 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Options;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
+import org.apache.tajo.engine.planner.PlanString;
 import org.apache.tajo.util.TUtil;
 
 public class CreateTableNode extends LogicalNode implements Cloneable {
@@ -35,8 +36,8 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
   @Expose private Options options;
   @Expose private boolean external;
 
-  public CreateTableNode(String tableName, Schema schema) {
-    super(NodeType.CREATE_TABLE);
+  public CreateTableNode(int pid, String tableName, Schema schema) {
+    super(pid, NodeType.CREATE_TABLE);
     this.tableName = tableName;
     this.schema = schema;
   }
@@ -87,6 +88,12 @@ public class CreateTableNode extends LogicalNode implements Cloneable {
 
   public void setExternal(boolean external) {
     this.external = external;
+  }
+
+
+  @Override
+  public PlanString getPlanString() {
+    return new PlanString("CreateTable");
   }
   
   @Override

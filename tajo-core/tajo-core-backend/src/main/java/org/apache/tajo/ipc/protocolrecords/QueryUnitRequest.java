@@ -21,15 +21,17 @@
  */
 package org.apache.tajo.ipc.protocolrecords;
 
-import java.net.URI;
-import java.util.List;
-import java.util.Map;
-
+import org.apache.tajo.DataChannel;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.common.ProtoObject;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.QueryContext;
 import org.apache.tajo.storage.Fragment;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Map;
 
 public interface QueryUnitRequest extends ProtoObject<TajoWorkerProtocol.QueryUnitRequestProto> {
 
@@ -41,20 +43,14 @@ public interface QueryUnitRequest extends ProtoObject<TajoWorkerProtocol.QueryUn
 	public boolean isInterQuery();
 	public void setInterQuery();
 	public void addFetch(String name, URI uri);
-
-  public List<TajoWorkerProtocol.Fetch> getFetches();
-
+	public List<TajoWorkerProtocol.Fetch> getFetches();
   public boolean shouldDie();
-
   public void setShouldDie();
-
   public List<Integer> getJoinKeys();
-
   public void setJoinKeys(List<Integer> joinKeys);
-
   public void setHistogram(Map<Integer, Long> histogram);
-
   public Map<Integer, Long> getHistogram();
-
   public QueryContext getQueryContext();
+  public DataChannel getDataChannel();
+  public Enforcer getEnforcer();
 }

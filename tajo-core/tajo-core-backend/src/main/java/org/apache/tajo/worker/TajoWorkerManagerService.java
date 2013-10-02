@@ -128,10 +128,10 @@ public class TajoWorkerManagerService extends CompositeService
           queryMasterTask.getQueryTaskContext().getResourceAllocator().makeContainerId(request.getContainerId());
 
       if(queryMasterTask == null || queryMasterTask.isStopped()) {
-        LOG.info("getTask:" + cid + ", ebId:" + ebId + ", but query is finished.");
+        LOG.debug("getTask:" + cid + ", ebId:" + ebId + ", but query is finished.");
         done.run(TaskSchedulerImpl.stopTaskRunnerReq);
       } else {
-        LOG.info("getTask:" + cid + ", ebId:" + ebId);
+        LOG.debug("getTask:" + cid + ", ebId:" + ebId);
         queryMasterTask.handleTaskRequestEvent(new TaskRequestEvent(cid, ebId, done));
       }
     } catch (Exception e) {
@@ -202,7 +202,8 @@ public class TajoWorkerManagerService extends CompositeService
       QueryId queryId = new QueryId(request.getQueryId());
       LOG.info("Receive executeQuery request:" + queryId);
       queryMaster.handle(new QueryStartEvent(queryId,
-          new QueryContext(request.getQueryContext()), request.getLogicalPlanJson().getValue()));
+          new QueryContext(request.getQueryContext()), request.getSql().getValue(),
+          request.getLogicalPlanJson().getValue()));
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);

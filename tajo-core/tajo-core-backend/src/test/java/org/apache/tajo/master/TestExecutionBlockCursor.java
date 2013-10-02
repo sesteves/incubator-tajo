@@ -16,7 +16,7 @@ package org.apache.tajo.master;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
-import org.apache.tajo.QueryIdFactory;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.benchmark.TPCH;
@@ -33,7 +33,8 @@ import org.apache.tajo.engine.planner.LogicalPlanner;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.engine.planner.logical.LogicalRootNode;
-import org.apache.tajo.storage.StorageManager;
+import org.apache.tajo.storage.AbstractStorageManager;
+import org.apache.tajo.storage.StorageManagerFactory;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -68,11 +69,11 @@ public class TestExecutionBlockCursor {
     logicalPlanner = new LogicalPlanner(catalog);
     optimizer = new LogicalOptimizer();
 
-    StorageManager sm  = new StorageManager(conf);
+    AbstractStorageManager sm  = StorageManagerFactory.getStorageManager(conf);
     AsyncDispatcher dispatcher = new AsyncDispatcher();
     dispatcher.init(conf);
     dispatcher.start();
-    planner = new GlobalPlanner(conf, sm, dispatcher.getEventHandler());
+    planner = new GlobalPlanner(conf, sm);
   }
 
   public static void tearDown() {
@@ -89,8 +90,10 @@ public class TestExecutionBlockCursor {
             "join partsupp on s_suppkey = ps_suppkey " +
             "join part on p_partkey = ps_partkey and p_type like '%BRASS' and p_size = 15");
     LogicalPlan logicalPlan = logicalPlanner.createPlan(context);
-    LogicalNode rootNode = optimizer.optimize(logicalPlan);
-    MasterPlan plan = planner.build(QueryIdFactory.newQueryId(), (LogicalRootNode) rootNode);
+    optimizer.optimize(logicalPlan);
+    QueryContext queryContext = new QueryContext();
+    MasterPlan plan = new MasterPlan(LocalTajoTestingUtility.newQueryId(), queryContext, logicalPlan);
+    planner.build(plan);
 
     ExecutionBlockCursor cursor = new ExecutionBlockCursor(plan);
 
@@ -100,7 +103,7 @@ public class TestExecutionBlockCursor {
       count++;
     }
 
-    // 4 input relations, 4 join, and 1 projection = 9 execution blocks
-    assertEquals(9, count);
+    // 4 input relations, 4 join, and 1 terminal = 9 execution blocks
+    assertEquals(10, count);
   }
 }

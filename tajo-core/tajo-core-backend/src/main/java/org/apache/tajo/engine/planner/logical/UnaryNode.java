@@ -16,9 +16,6 @@
  * limitations under the License.
  */
 
-/**
- * 
- */
 package org.apache.tajo.engine.planner.logical;
 
 import com.google.gson.annotations.Expose;
@@ -27,23 +24,19 @@ import com.google.gson.annotations.Expose;
 public abstract class UnaryNode extends LogicalNode implements Cloneable {
 	@Expose LogicalNode child;
 	
-	public UnaryNode() {
-		super();
-	}
-	
 	/**
 	 * @param type
 	 */
-	public UnaryNode(NodeType type) {
-		super(type);
+	public UnaryNode(int pid, NodeType type) {
+		super(pid, type);
 	}
 	
 	public void setChild(LogicalNode subNode) {
 		this.child = subNode;
 	}
 	
-	public LogicalNode getChild() {
-		return this.child;
+	public <T extends LogicalNode> T getChild() {
+		return (T) this.child;
 	}
 	
 	@Override

@@ -20,6 +20,7 @@ package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -30,12 +31,11 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
-import org.apache.tajo.engine.planner.LogicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlanner;
-import org.apache.tajo.engine.planner.PhysicalPlannerImpl;
-import org.apache.tajo.engine.planner.PlanningException;
+import org.apache.tajo.engine.planner.*;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
+import org.apache.tajo.engine.planner.logical.JoinNode;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
-import org.apache.tajo.engine.planner.logical.SortNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
 import org.apache.tajo.util.TUtil;
@@ -45,6 +45,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 
+import static org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -55,7 +56,7 @@ public class TestMergeJoinExec {
   private CatalogService catalog;
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
 
   private TableDesc employee;
   private TableDesc people;
@@ -68,7 +69,7 @@ public class TestMergeJoinExec {
     Path testDir = CommonTestingUtil.getTestDir(TEST_PATH);
     conf = util.getConfiguration();
     FileSystem fs = testDir.getFileSystem(conf);
-    sm = StorageManager.get(conf, testDir);
+    sm = StorageManagerFactory.getStorageManager(conf, testDir);
 
     Schema employeeSchema = new Schema();
     employeeSchema.addColumn("managerId", Type.INT4);
@@ -79,7 +80,7 @@ public class TestMergeJoinExec {
     TableMeta employeeMeta = CatalogUtil.newTableMeta(employeeSchema,
         StoreType.CSV);
     Path employeePath = new Path(testDir, "employee.csv");
-    Appender appender = StorageManager.getAppender(conf, employeeMeta, employeePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(employeeMeta, employeePath);
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
     for (int i = 0; i < 10; i++) {
@@ -108,7 +109,7 @@ public class TestMergeJoinExec {
     peopleSchema.addColumn("age", Type.INT4);
     TableMeta peopleMeta = CatalogUtil.newTableMeta(peopleSchema, StoreType.CSV);
     Path peoplePath = new Path(testDir, "people.csv");
-    appender = StorageManager.getAppender(conf, peopleMeta, peoplePath);
+    appender = StorageManagerFactory.getStorageManager(conf).getAppender(peopleMeta, peoplePath);
     appender.init();
     tuple = new VTuple(peopleMeta.getSchema().getColumnNum());
     for (int i = 1; i < 10; i += 2) {
@@ -147,68 +148,27 @@ public class TestMergeJoinExec {
 
   @Test
   public final void testMergeInnerJoin() throws IOException, PlanningException {
-    Fragment[] empFrags = sm.splitNG(conf, "employee", employee.getMeta(), employee.getPath(),
-        Integer.MAX_VALUE);
-    Fragment[] peopleFrags = sm.splitNG(conf, "people", people.getMeta(), people.getPath(),
-        Integer.MAX_VALUE);
+    Expr expr = analyzer.parse(QUERIES[0]);
+    LogicalPlan plan = planner.createPlan(expr);
+    LogicalNode root = plan.getRootBlock().getRoot();
 
+    JoinNode joinNode = PlannerUtil.findTopNode(root, NodeType.JOIN);
+    Enforcer enforcer = new Enforcer();
+    enforcer.enforceJoinAlgorithm(joinNode.getPID(), JoinAlgorithm.MERGE_JOIN);
+
+    Fragment[] empFrags = sm.splitNG(conf, "e", employee.getMeta(), employee.getPath(), Integer.MAX_VALUE);
+    Fragment[] peopleFrags = sm.splitNG(conf, "p", people.getMeta(), people.getPath(), Integer.MAX_VALUE);
     Fragment[] merged = TUtil.concat(empFrags, peopleFrags);
 
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/testMergeInnerJoin");
     TaskAttemptContext ctx = new TaskAttemptContext(conf,
-        TUtil.newQueryUnitAttemptId(), merged, workDir);
-    Expr expr = analyzer.parse(QUERIES[0]);
-    LogicalNode plan = planner.createPlan(expr).getRootBlock().getRoot();
+        LocalTajoTestingUtility.newQueryUnitAttemptId(), merged, workDir);
+    ctx.setEnforcer(enforcer);
 
     PhysicalPlanner phyPlanner = new PhysicalPlannerImpl(conf,sm);
-    PhysicalExec exec = phyPlanner.createPlan(ctx, plan);
-
+    PhysicalExec exec = phyPlanner.createPlan(ctx, root);
     ProjectionExec proj = (ProjectionExec) exec;
-
-    // TODO - should be planed with user's optimization hint
-    if (!(proj.getChild() instanceof MergeJoinExec)) {
-      BinaryPhysicalExec nestedLoopJoin = (BinaryPhysicalExec) proj.getChild();
-      SeqScanExec outerScan = (SeqScanExec) nestedLoopJoin.getLeftChild();
-      SeqScanExec innerScan = (SeqScanExec) nestedLoopJoin.getRightChild();
-
-      SeqScanExec tmp;
-      if (!outerScan.getTableName().equals("employee")) {
-        tmp = outerScan;
-        outerScan = innerScan;
-        innerScan = tmp;
-      }
-
-      SortSpec[] outerSortKeys = new SortSpec[2];
-      SortSpec[] innerSortKeys = new SortSpec[2];
-
-      Schema employeeSchema = catalog.getTableDesc("employee").getMeta()
-          .getSchema();
-      outerSortKeys[0] = new SortSpec(
-          employeeSchema.getColumnByName("empId"));
-      outerSortKeys[1] = new SortSpec(
-          employeeSchema.getColumnByName("memId"));
-      SortNode outerSort = new SortNode(outerSortKeys);
-      outerSort.setInSchema(outerScan.getSchema());
-      outerSort.setOutSchema(outerScan.getSchema());
-
-      Schema peopleSchema = catalog.getTableDesc("people").getMeta().getSchema();
-      innerSortKeys[0] = new SortSpec(
-          peopleSchema.getColumnByName("empId"));
-      innerSortKeys[1] = new SortSpec(
-          peopleSchema.getColumnByName("fk_memid"));
-      SortNode innerSort = new SortNode(innerSortKeys);
-      innerSort.setInSchema(innerScan.getSchema());
-      innerSort.setOutSchema(innerScan.getSchema());
-
-      MemSortExec outerSortExec = new MemSortExec(ctx, outerSort, outerScan);
-      MemSortExec innerSortExec = new MemSortExec(ctx, innerSort, innerScan);
-
-      MergeJoinExec mergeJoin = new MergeJoinExec(ctx,
-          ((HashJoinExec)nestedLoopJoin).getPlan(), outerSortExec, innerSortExec,
-          outerSortKeys, innerSortKeys);
-      proj.setChild(mergeJoin);
-      exec = proj;
-    }
+    assertTrue(proj.getChild() instanceof MergeJoinExec);
 
     Tuple tuple;
     int count = 0;
@@ -219,7 +179,7 @@ public class TestMergeJoinExec {
       assertTrue(i == tuple.getInt(0).asInt4());
       assertTrue(i == tuple.getInt(1).asInt4());
       assertTrue(("dept_" + i).equals(tuple.getString(2).asChars()));
-      assertTrue(10 + i == tuple.getInt(3).asInt4());
+      assertTrue((10 + i) == tuple.getInt(3).asInt4());
 
       i += 2;
     }

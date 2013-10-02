@@ -19,6 +19,7 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -30,10 +31,10 @@ import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.engine.parser.SQLAnalyzer;
 import org.apache.tajo.engine.planner.*;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.engine.planner.logical.LogicalNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.TUtil;
 import org.junit.After;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -50,7 +51,7 @@ public class TestSortExec {
   private static SQLAnalyzer analyzer;
   private static LogicalPlanner planner;
   private static LogicalOptimizer optimizer;
-  private static StorageManager sm;
+  private static AbstractStorageManager sm;
   private static TajoTestingCluster util;
   private static Path workDir;
   private static Path tablePath;
@@ -64,7 +65,7 @@ public class TestSortExec {
     util = new TajoTestingCluster();
     catalog = util.startCatalogCluster().getCatalog();
     workDir = CommonTestingUtil.getTestDir(TEST_PATH);
-    sm = StorageManager.get(conf, workDir);
+    sm = StorageManagerFactory.getStorageManager(conf, workDir);
 
     Schema schema = new Schema();
     schema.addColumn("managerId", Type.INT4);
@@ -76,7 +77,7 @@ public class TestSortExec {
     tablePath = StorageUtil.concatPath(workDir, "employee", "table1");
     sm.getFileSystem().mkdirs(tablePath.getParent());
 
-    Appender appender = StorageManager.getAppender(conf, employeeMeta, tablePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(employeeMeta, tablePath);
     appender.init();
     Tuple tuple = new VTuple(employeeMeta.getSchema().getColumnNum());
     for (int i = 0; i < 100; i++) {
@@ -109,9 +110,9 @@ public class TestSortExec {
   public final void testNext() throws IOException, PlanningException {
     Fragment [] frags = sm.splitNG(conf, "employee", employeeMeta, tablePath, Integer.MAX_VALUE);
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/TestSortExec");
-    TaskAttemptContext ctx = new TaskAttemptContext(conf, TUtil
-        .newQueryUnitAttemptId(),
-        new Fragment[] { frags[0] }, workDir);
+    TaskAttemptContext ctx = new TaskAttemptContext(conf, LocalTajoTestingUtility
+        .newQueryUnitAttemptId(), new Fragment[] { frags[0] }, workDir);
+    ctx.setEnforcer(new Enforcer());
     Expr context = analyzer.parse(QUERIES[0]);
     LogicalPlan plan = planner.createPlan(context);
     LogicalNode rootNode = optimizer.optimize(plan);

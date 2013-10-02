@@ -124,6 +124,7 @@ AVG : A V G;
 BY : B Y;
 
 CASE : C A S E;
+CAST : C A S T;
 CHARACTER : C H A R A C T E R;
 COALESCE : C O A L E S C E;
 COUNT : C O U N T;
@@ -155,6 +156,7 @@ GROUPING : G R O U P I N G;
 
 HAVING : H A V I N G;
 
+ILIKE : I L I K E;
 IN : I N;
 INDEX : I N D E X;
 INNER : I N N E R;
@@ -188,7 +190,9 @@ OVERWRITE : O V E R W R I T E;
 
 PRECISION : P R E C I S I ON;
 
+REGEXP : R E G E X P;
 RIGHT : R I G H T;
+RLIKE : R L I K E;
 ROLLUP : R O L L U P;
 
 SET : S E T;
@@ -227,17 +231,22 @@ FUSION : F U S I O N;
 
 INTERSECTION : I N T E R S E C T I O N;
 
+SIMILAR : S I M I L A R;
 STDDEV_POP : S T D D E V UNDERLINE P O P;
 STDDEV_SAMP : S T D D E V UNDERLINE S A M P;
 SUM : S U M;
+
+TO : T O;
 
 Nonreserved_keywords
   : COLLECT
   | FUSION
   | INTERSECTION
+  | SIMILAR
   | STDDEV_POP
   | STDDEV_SAMP
   | SUM
+  | TO
   ;
 
 /*
@@ -292,10 +301,22 @@ BYTEA : B Y T E A; // alias for BLOB
 INET4 : I N E T '4';
 
 // Operators
+Similar_To : '~';
+Not_Similar_To : '!~';
+Similar_To_Case_Insensitive : '~*';
+Not_Similar_To_Case_Insensitive : '!~*';
+
+// Cast Operator
+CAST_EXPRESSION
+  : COLON COLON
+  ;
+
 ASSIGN  : ':=';
 EQUAL  : '=';
+COLON :  ':';
 SEMI_COLON :  ';';
 COMMA : ',';
+CONCATENATION_OPERATOR : VERTICAL_BAR VERTICAL_BAR;
 NOT_EQUAL  : '<>' | '!=' | '~='| '^=' ;
 LTH : '<' ;
 LEQ : '<=';
@@ -310,6 +331,7 @@ DIVIDE  : '/';
 MODULAR : '%';
 DOT : '.';
 UNDERLINE : '_';
+VERTICAL_BAR : '|';
 
 NUMBER : Digit+;
 
@@ -342,7 +364,7 @@ Identifier
   ;
 
 Regular_Identifier
-  : ('a'..'z'|'A'..'Z'|'_') ('a'..'z'|'A'..'Z'|Digit|'_'|':')*
+  : ('a'..'z'|'A'..'Z'|'_') ('a'..'z'|'A'..'Z'|Digit|'_')*
   ;
 
 /*

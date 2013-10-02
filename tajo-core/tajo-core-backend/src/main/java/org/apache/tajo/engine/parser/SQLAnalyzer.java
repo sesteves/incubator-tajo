@@ -23,12 +23,14 @@ import org.antlr.v4.runtime.ANTLRInputStream;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.NotNull;
 import org.antlr.v4.runtime.tree.TerminalNode;
+import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.tajo.algebra.*;
 import org.apache.tajo.algebra.Aggregation.GroupType;
 import org.apache.tajo.algebra.LiteralValue.LiteralType;
 import org.apache.tajo.engine.parser.SQLParser.*;
 import org.apache.tajo.engine.query.exception.SQLParseError;
 import org.apache.tajo.engine.query.exception.SQLSyntaxError;
+import org.apache.tajo.storage.CSVFile;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -82,7 +84,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
 
     OpType operatorType;
     Expr left;
-    for (int i = 1; i < ctx.getChildCount();) {
+    for (int i = 1; i < ctx.getChildCount(); i++) {
       int idx = i;
       boolean distinct = true;
 
@@ -103,13 +105,14 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
           idx++;
         }
 
-        SQLParser.Query_termContext queryTermContext = (SQLParser.Query_termContext) ctx.getChild(idx);
+        SQLParser.Query_termContext queryTermContext =
+            (SQLParser.Query_termContext) ctx.getChild(idx);
         Expr right = visitQuery_term(queryTermContext);
 
         left = current;
         current = new SetOperation(operatorType, left, right, distinct);
 
-        i += idx;
+        i = idx;
       }
     }
 
@@ -144,7 +147,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         left = current;
         current = new SetOperation(OpType.Intersect, left, right, distinct);
 
-        i += idx;
+        i+=idx;
       }
     }
 
@@ -170,9 +173,11 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         current = aggregation;
 
         if (ctx.table_expression().having_clause() != null) {
-          Expr havingCondition = visitBoolean_value_expression(ctx.table_expression().having_clause()
-              .boolean_value_expression());
-          aggregation.setHavingCondition(havingCondition);
+          Expr havingCondition = visitBoolean_value_expression(
+              ctx.table_expression().having_clause().boolean_value_expression());
+          Having having = new Having(havingCondition);
+          having.setChild(current);
+          current = having;
         }
       }
 
@@ -253,7 +258,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   public RelationList visitFrom_clause(SQLParser.From_clauseContext ctx) {
     Expr [] relations = new Expr[ctx.table_reference_list().table_reference().size()];
     for (int i = 0; i < relations.length; i++) {
-      relations[i] = visit(ctx.table_reference_list().table_reference(i));
+      relations[i] = visitTable_reference(ctx.table_reference_list().table_reference(i));
     }
     return new RelationList(relations);
   }
@@ -390,7 +395,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   public Expr visitTable_primary(SQLParser.Table_primaryContext ctx) {
     if (ctx.table_or_query_name() != null) {
       Relation relation = new Relation(ctx.table_or_query_name().getText());
-      if (ctx.AS() != null) {
+      if (ctx.alias != null) {
         relation.setAlias(ctx.alias.getText());
       }
       return relation;
@@ -448,6 +453,30 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   }
 
   @Override
+  public Expr visitBoolean_value_expression(SQLParser.Boolean_value_expressionContext ctx) {
+    Expr current = visitOr_predicate(ctx.or_predicate());
+    if (checkIfExist(ctx.CAST_EXPRESSION())) {
+      current = new CastExpr(current, visitData_type(ctx.data_type()));
+    }
+    return current;
+  }
+
+  @Override
+  public Expr visitOr_predicate(SQLParser.Or_predicateContext ctx) {
+    Expr current = visitAnd_predicate(ctx.and_predicate(0));
+
+    Expr left;
+    Expr right;
+    for (int i = 1; i < ctx.and_predicate().size(); i++) {
+      left = current;
+      right = visitAnd_predicate(ctx.and_predicate(i));
+      current = new BinaryOperator(OpType.Or, left, right);
+    }
+
+    return current;
+  }
+
+  @Override
   public Expr visitAnd_predicate(SQLParser.And_predicateContext ctx) {
     Expr current = visitBoolean_factor(ctx.boolean_factor(0));
 
@@ -457,22 +486,6 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
       left = current;
       right = visitBoolean_factor(ctx.boolean_factor(i));
       current = new BinaryOperator(OpType.And, left, right);
-    }
-
-    return current;
-  }
-
-  @Override
-  public Expr visitBoolean_value_expression(SQLParser.Boolean_value_expressionContext ctx) {
-
-    Expr current = visitAnd_predicate(ctx.and_predicate(0));
-
-    Expr left;
-    Expr right;
-    for (int i = 1; i < ctx.and_predicate().size(); i++) {
-      left = current;
-      right = visitAnd_predicate(ctx.and_predicate(i));
-      current = new BinaryOperator(OpType.Or, left, right);
     }
 
     return current;
@@ -538,14 +551,14 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
 
   @Override
   public Expr visitTerm(SQLParser.TermContext ctx) {
-    Expr current = visitNumeric_primary(ctx.numeric_primary(0));
+    Expr current = visitConcatenatable_term(ctx.concatenatable_term(0));
 
     Expr left;
     Expr right;
     for (int i = 1; i < ctx.getChildCount(); i++) {
       left = current;
       TerminalNode operator = (TerminalNode) ctx.getChild(i++);
-      right = visitNumeric_primary((Numeric_primaryContext) ctx.getChild(i));
+      right = visitConcatenatable_term((Concatenatable_termContext) ctx.getChild(i));
 
       if (operator.getSymbol().getType() == MULTIPLY) {
         current = new BinaryOperator(OpType.Multiply, left, right);
@@ -553,6 +566,27 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         current = new BinaryOperator(OpType.Divide, left, right);
       } else {
         current = new BinaryOperator(OpType.Modular, left, right);
+      }
+    }
+
+    return current;
+  }
+
+  @Override public Expr visitConcatenatable_term(SQLParser.Concatenatable_termContext ctx) {
+    Expr current = visitNumeric_primary(ctx.numeric_primary(0));
+
+    Expr left;
+    Expr right;
+    for (int i = 1; i < ctx.getChildCount(); i++) {
+      left = current;
+      i++; // skip '||' operator
+      right = visitNumeric_primary((Numeric_primaryContext) ctx.getChild(i));
+
+      if (left.getType() == OpType.Literal && right.getType() == OpType.Literal) {
+        current = new LiteralValue(((LiteralValue)left).getValue() + ((LiteralValue)right).getValue(),
+            LiteralType.String);
+      } else {
+        current = new BinaryOperator(OpType.Concatenate, left, right);
       }
     }
 
@@ -621,13 +655,41 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   }
 
   @Override
-  public LikePredicate visitLike_predicate(SQLParser.Like_predicateContext ctx) {
-    boolean not = ctx.NOT() != null;
-
-    ColumnReferenceExpr predicand = (ColumnReferenceExpr) visit(ctx.column_reference());
+  public Expr visitPattern_matching_predicate(SQLParser.Pattern_matching_predicateContext ctx) {
+    Expr predicand = visitChildren(ctx.numeric_primary());
     Expr pattern = new LiteralValue(stripQuote(ctx.Character_String_Literal().getText()),
         LiteralType.String);
-    return new LikePredicate(not, predicand, pattern);
+
+    if (checkIfExist(ctx.pattern_matcher().negativable_matcher())) {
+      boolean not = ctx.pattern_matcher().NOT() != null;
+      Negativable_matcherContext matcher = ctx.pattern_matcher().negativable_matcher();
+      if (checkIfExist(matcher.LIKE())) {
+        return new PatternMatchPredicate(OpType.LikePredicate, not, predicand, pattern);
+      } else if (checkIfExist(matcher.ILIKE())) {
+        return new PatternMatchPredicate(OpType.LikePredicate, not, predicand, pattern, true);
+      } else if (checkIfExist(matcher.SIMILAR())) {
+        return new PatternMatchPredicate(OpType.SimilarToPredicate, not, predicand, pattern);
+      } else if (checkIfExist(matcher.REGEXP()) || checkIfExist(matcher.RLIKE())) {
+        return new PatternMatchPredicate(OpType.Regexp, not, predicand, pattern);
+      } else {
+        throw new SQLSyntaxError("Unsupported predicate: " + matcher.getText());
+      }
+    } else if (checkIfExist(ctx.pattern_matcher().regex_matcher())) {
+      Regex_matcherContext matcher = ctx.pattern_matcher().regex_matcher();
+      if (checkIfExist(matcher.Similar_To())) {
+        return new PatternMatchPredicate(OpType.Regexp, false, predicand, pattern, false);
+      } else if (checkIfExist(matcher.Not_Similar_To())) {
+        return new PatternMatchPredicate(OpType.Regexp, true, predicand, pattern, false);
+      } else if (checkIfExist(matcher.Similar_To_Case_Insensitive())) {
+        return new PatternMatchPredicate(OpType.Regexp, false, predicand, pattern, true);
+      } else if (checkIfExist(matcher.Not_Similar_To_Case_Insensitive())) {
+        return new PatternMatchPredicate(OpType.Regexp, true, predicand, pattern, true);
+      } else {
+        throw new SQLSyntaxError("Unsupported predicate: " + matcher.getText());
+      }
+    } else {
+      throw new SQLSyntaxError("Unsupported predicate: " + ctx.pattern_matcher().getText());
+    }
   }
 
   @Override
@@ -637,10 +699,19 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   }
 
   @Override
+  public Expr visitLiteral(@NotNull SQLParser.LiteralContext ctx) {
+    if (checkIfExist(ctx.NULL())) {
+      return new NullValue();
+    } else {
+      return visitChildren(ctx);
+    }
+  }
+
+  @Override
   public ColumnReferenceExpr visitColumn_reference(SQLParser.Column_referenceContext ctx) {
     ColumnReferenceExpr column = new ColumnReferenceExpr(ctx.name.getText());
     if (ctx.tb_name != null) {
-      column.setTableName(ctx.tb_name.getText());
+      column.setQualifier(ctx.tb_name.getText());
     }
 
     return column;
@@ -655,7 +726,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     }
   }
 
-  @Override public FunctionExpr visitAggregate_function(@NotNull SQLParser.Aggregate_functionContext ctx) {
+  @Override public FunctionExpr visitAggregate_function( SQLParser.Aggregate_functionContext ctx) {
     if (ctx.COUNT() != null && ctx.MULTIPLY() != null) {
       return new CountRowsFunctionExpr();
     } else {
@@ -663,7 +734,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     }
   }
 
-  @Override public FunctionExpr visitGeneral_set_function(@NotNull SQLParser.General_set_functionContext ctx) {
+  @Override public FunctionExpr visitGeneral_set_function(SQLParser.General_set_functionContext ctx) {
     String signature = ctx.set_function_type().getText();
     boolean distinct = checkIfExist(ctx.set_qualifier()) && checkIfExist(ctx.set_qualifier().DISTINCT()) ? true : false;
     Expr param = visitBoolean_value_expression(ctx.boolean_value_expression());
@@ -703,8 +774,8 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
   }
 
   @Override
-  public LiteralValue visitString_value_expr(SQLParser.String_value_exprContext ctx) {
-    return new LiteralValue(stripQuote(ctx.getText()), LiteralType.String);
+  public LiteralValue visitString_value_expression(@NotNull SQLParser.String_value_expressionContext ctx) {
+    return new LiteralValue(stripQuote(ctx.Character_String_Literal().getText()), LiteralType.String);
   }
 
   @Override
@@ -740,7 +811,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     }
 
     if (ctx.param_clause() != null) {
-      Map<String, String> params = getParams(ctx.param_clause());
+      Map<String, String> params = escapeTableMeta(getParams(ctx.param_clause()));
       createTable.setParams(params);
     }
     return createTable;
@@ -751,26 +822,18 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     CreateTable.ColumnDefinition [] elements = new CreateTable.ColumnDefinition[size];
     for (int i = 0; i < size; i++) {
       String name = ctx.field_element(i).name.getText();
-      TypeDefinition typeDef = getDataType(ctx.field_element(i).field_type().data_type());
-      String type = typeDef.getType();
-      elements[i] = new CreateTable.ColumnDefinition(name, type);
-      if (typeDef.getLengthOrPrecision() != null) {
-        elements[i].setLengthOrPrecision(typeDef.getLengthOrPrecision());
-
-        if (typeDef.getScale() != null) {
-          elements[i].setScale(typeDef.getScale());
-        }
-      }
-
+      DataType typeDef = visitData_type(ctx.field_element(i).field_type().data_type());
+      elements[i] = new CreateTable.ColumnDefinition(name, typeDef);
     }
 
     return elements;
   }
 
-  private TypeDefinition getDataType(SQLParser.Data_typeContext type) {
-    SQLParser.Predefined_typeContext predefined_type = type.predefined_type();
+  @Override
+  public DataType visitData_type(SQLParser.Data_typeContext ctx) {
+    SQLParser.Predefined_typeContext predefined_type = ctx.predefined_type();
 
-    TypeDefinition typeDefinition = null;
+    DataType typeDefinition = null;
     if (predefined_type.character_string_type() != null) {
       SQLParser.Character_string_typeContext character_string_type =
           predefined_type.character_string_type();
@@ -778,7 +841,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
       if ((character_string_type.CHARACTER() != null || character_string_type.CHAR() != null) &&
           character_string_type.VARYING() == null) {
 
-        typeDefinition = new TypeDefinition(Type.CHAR.name());
+        typeDefinition = new DataType(Type.CHAR.name());
 
         if (character_string_type.type_length() != null) {
           typeDefinition.setLengthOrPrecision(
@@ -788,7 +851,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
       } else if (character_string_type.VARCHAR() != null
           || character_string_type.VARYING() != null) {
 
-        typeDefinition = new TypeDefinition(Type.VARCHAR.name());
+        typeDefinition = new DataType(Type.VARCHAR.name());
 
         if (character_string_type.type_length() != null) {
           typeDefinition.setLengthOrPrecision(
@@ -796,7 +859,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         }
 
       } else if (character_string_type.TEXT() != null) {
-        typeDefinition =  new TypeDefinition(Type.TEXT.name());
+        typeDefinition =  new DataType(Type.TEXT.name());
       }
 
     } else if (predefined_type.national_character_string_type() != null) {
@@ -804,9 +867,9 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
           predefined_type.national_character_string_type();
       if ((nchar_type.CHAR() != null || nchar_type.CHARACTER() != null
           || nchar_type.NCHAR() != null) && nchar_type.VARYING() == null) {
-        typeDefinition = new TypeDefinition(Type.NCHAR.name());
+        typeDefinition = new DataType(Type.NCHAR.name());
       } else if (nchar_type.NVARCHAR() != null || nchar_type.VARYING() != null) {
-        typeDefinition = new TypeDefinition(Type.NVARCHAR.name());
+        typeDefinition = new DataType(Type.NVARCHAR.name());
       }
 
       if (nchar_type.type_length() != null) {
@@ -817,7 +880,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     } else if (predefined_type.binary_large_object_string_type() != null) {
       SQLParser.Binary_large_object_string_typeContext blob_type =
           predefined_type.binary_large_object_string_type();
-      typeDefinition = new TypeDefinition(Type.BLOB.name());
+      typeDefinition = new DataType(Type.BLOB.name());
       if (blob_type.type_length() != null) {
         typeDefinition.setLengthOrPrecision(
             Integer.parseInt(blob_type.type_length().NUMBER().getText()));
@@ -828,22 +891,22 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         SQLParser.Exact_numeric_typeContext exactType =
             predefined_type.numeric_type().exact_numeric_type();
         if (exactType.TINYINT() != null || exactType.INT1() != null) {
-          typeDefinition = new TypeDefinition(Type.INT1.name());
+          typeDefinition = new DataType(Type.INT1.name());
         } else if (exactType.INT2() != null || exactType.SMALLINT() != null) {
-          typeDefinition = new TypeDefinition(Type.INT2.name());
+          typeDefinition = new DataType(Type.INT2.name());
         } else if (exactType.INT4() != null || exactType.INTEGER() != null ||
             exactType.INT() != null) {
-          typeDefinition = new TypeDefinition(Type.INT4.name());
+          typeDefinition = new DataType(Type.INT4.name());
         } else if (exactType.INT8() != null || exactType.BIGINT() != null) {
-          typeDefinition = new TypeDefinition(Type.INT8.name());
+          typeDefinition = new DataType(Type.INT8.name());
         } else if (exactType.NUMERIC() != null) {
-          typeDefinition = new TypeDefinition(Type.NUMERIC.name());
+          typeDefinition = new DataType(Type.NUMERIC.name());
         } else if (exactType.DECIMAL() != null || exactType.DEC() != null) {
-          typeDefinition = new TypeDefinition(Type.DECIMAL.name());
+          typeDefinition = new DataType(Type.DECIMAL.name());
         }
 
-        if (typeDefinition.getType().equals(Type.NUMERIC.name()) ||
-            typeDefinition.getType().equals(Type.DECIMAL.name())) {
+        if (typeDefinition.getTypeName().equals(Type.NUMERIC.name()) ||
+            typeDefinition.getTypeName().equals(Type.DECIMAL.name())) {
           if (exactType.precision_param() != null) {
             if (exactType.precision_param().scale != null) {
               typeDefinition.setScale(
@@ -858,34 +921,34 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
             predefined_type.numeric_type().approximate_numeric_type();
         if (approximateType.FLOAT() != null || approximateType.FLOAT4() != null
             || approximateType.REAL() != null) {
-          typeDefinition = new TypeDefinition(Type.FLOAT4.name());
+          typeDefinition = new DataType(Type.FLOAT4.name());
         } else if (approximateType.FLOAT8() != null || approximateType.DOUBLE() != null) {
-          typeDefinition = new TypeDefinition(Type.FLOAT8.name());
+          typeDefinition = new DataType(Type.FLOAT8.name());
         }
       }
     } else if (predefined_type.boolean_type() != null)  {
-      typeDefinition = new TypeDefinition(Type.BOOLEAN.name());
+      typeDefinition = new DataType(Type.BOOLEAN.name());
     } else if (predefined_type.datetime_type() != null) {
       SQLParser.Datetime_typeContext dateTimeType = predefined_type.datetime_type();
       if (dateTimeType.DATE() != null) {
-        typeDefinition = new TypeDefinition(Type.DATE.name());
+        typeDefinition = new DataType(Type.DATE.name());
       } else if (dateTimeType.TIME(0) != null && dateTimeType.ZONE() == null) {
-        typeDefinition = new TypeDefinition(Type.TIME.name());
+        typeDefinition = new DataType(Type.TIME.name());
       } else if ((dateTimeType.TIME(0) != null && dateTimeType.ZONE() != null) ||
           dateTimeType.TIMETZ() != null) {
-        typeDefinition = new TypeDefinition(Type.TIMEZ.name());
+        typeDefinition = new DataType(Type.TIMEZ.name());
       } else if (dateTimeType.TIMESTAMP() != null && dateTimeType.ZONE() == null) {
-        typeDefinition = new TypeDefinition(Type.TIMESTAMP.name());
+        typeDefinition = new DataType(Type.TIMESTAMP.name());
       } else if ((dateTimeType.TIMESTAMP() != null && dateTimeType.ZONE() != null) ||
           dateTimeType.TIMESTAMPTZ() != null) {
-        typeDefinition = new TypeDefinition(Type.TIMESTAMPZ.name());
+        typeDefinition = new DataType(Type.TIMESTAMPZ.name());
       }
     } else if (predefined_type.bit_type() != null) {
       SQLParser.Bit_typeContext bitType = predefined_type.bit_type();
       if (bitType.VARBIT() != null || bitType.VARYING() != null) {
-        typeDefinition = new TypeDefinition(Type.VARBIT.name());
+        typeDefinition = new DataType(Type.VARBIT.name());
       } else {
-        typeDefinition = new TypeDefinition(Type.BIT.name());
+        typeDefinition = new DataType(Type.BIT.name());
       }
       if (bitType.type_length() != null) {
         typeDefinition.setLengthOrPrecision(
@@ -894,9 +957,9 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     } else if (predefined_type.binary_type() != null) {
       SQLParser.Binary_typeContext binaryType = predefined_type.binary_type();
       if (binaryType.VARBINARY() != null || binaryType.VARYING() != null) {
-        typeDefinition = new TypeDefinition(Type.VARBINARY.name());
+        typeDefinition = new DataType(Type.VARBINARY.name());
       } else {
-        typeDefinition = new TypeDefinition(Type.BINARY.name());
+        typeDefinition = new DataType(Type.BINARY.name());
       }
 
       if (binaryType.type_length() != null) {
@@ -906,36 +969,6 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     }
 
     return typeDefinition;
-  }
-
-  public static class TypeDefinition {
-    private String type;
-    private Integer length_or_precision;
-    private Integer scale;
-
-    TypeDefinition(String type) {
-      this.type = type;
-    }
-
-    String getType() {
-      return type;
-    }
-
-    public void setLengthOrPrecision(Integer length_or_precision) {
-      this.length_or_precision = length_or_precision;
-    }
-
-    public Integer getLengthOrPrecision() {
-      return length_or_precision;
-    }
-
-    void setScale(Integer scale) {
-      this.scale = scale;
-    }
-
-    public Integer getScale() {
-      return this.scale;
-    }
   }
 
   @Override
@@ -966,7 +999,7 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
         insertExpr.setStorageType(ctx.file_type.getText());
 
         if (ctx.param_clause() != null) {
-          insertExpr.setParams(getParams(ctx.param_clause()));
+          insertExpr.setParams(escapeTableMeta(getParams(ctx.param_clause())));
         }
       }
     }
@@ -995,7 +1028,37 @@ public class SQLAnalyzer extends SQLParserBaseVisitor<Expr> {
     return params;
   }
 
+  public Map<String, String> escapeTableMeta(Map<String, String> map) {
+    Map<String, String> params = new HashMap<String, String>();
+    for (Map.Entry<String, String> entry : map.entrySet()) {
+      if (entry.getKey().equals(CSVFile.DELIMITER)) {
+        params.put(entry.getKey(), escapeDelimiter(entry.getValue()));
+      } else if (entry.getKey().equals(CSVFile.NULL)) {
+        params.put(entry.getKey(), StringEscapeUtils.unescapeJava(entry.getValue()));
+      } else {
+        params.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return params;
+  }
+
+  public static String escapeDelimiter(String value) {
+    try {
+      String delimiter = StringEscapeUtils.unescapeJava(value);
+      delimiter = new String(new byte[]{Byte.valueOf(delimiter).byteValue()});
+      return StringEscapeUtils.escapeJava(delimiter);
+    } catch (NumberFormatException e) {
+    }
+    return value;
+  }
+
   private static String stripQuote(String str) {
     return str.substring(1, str.length() - 1);
+  }
+
+  @Override public Expr visitCast_specification(SQLParser.Cast_specificationContext ctx) {
+    Expr operand = visitChildren(ctx.cast_operand());
+    DataType castTarget = visitData_type(ctx.cast_target().data_type());
+    return new CastExpr(operand, castTarget);
   }
 }

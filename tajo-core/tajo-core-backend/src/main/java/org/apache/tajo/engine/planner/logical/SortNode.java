@@ -22,25 +22,21 @@ import com.google.common.base.Preconditions;
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
+import org.apache.tajo.engine.planner.PlanString;
 import org.apache.tajo.util.TUtil;
 
 public final class SortNode extends UnaryNode implements Cloneable {
-	@Expose
-  private SortSpec [] sortKeys;
-	
-	public SortNode() {
-		super();
-	}
+	@Expose private SortSpec [] sortKeys;
 
-  public SortNode(SortSpec[] sortKeys) {
-    super(NodeType.SORT);
+  public SortNode(int pid, SortSpec[] sortKeys) {
+    super(pid, NodeType.SORT);
     Preconditions.checkArgument(sortKeys.length > 0, 
         "At least one sort key must be specified");
     this.sortKeys = sortKeys;
   }
 
-  public SortNode(SortSpec[] sortKeys, Schema inSchema, Schema outSchema) {
-    this(sortKeys);
+  public SortNode(int pid, SortSpec[] sortKeys, Schema inSchema, Schema outSchema) {
+    this(pid, sortKeys);
     this.setInSchema(inSchema);
     this.setOutSchema(outSchema);
   }
@@ -69,7 +65,22 @@ public final class SortNode extends UnaryNode implements Cloneable {
     
     return sort;
   }
-  
+
+  @Override
+  public PlanString getPlanString() {
+    PlanString planStr = new PlanString("Sort");
+    StringBuilder sb = new StringBuilder("Sort Keys: ");
+    for (int i = 0; i < sortKeys.length; i++) {
+      sb.append(sortKeys[i].getSortKey().getColumnName()).append(" ")
+          .append(sortKeys[i].isAscending() ? "asc" : "desc");
+      if( i < sortKeys.length - 1) {
+        sb.append(",");
+      }
+    }
+    planStr.addExplan(sb.toString());
+    return planStr;
+  }
+
   public String toString() {
     StringBuilder sb = new StringBuilder("Sort [key= ");
     for (int i = 0; i < sortKeys.length; i++) {    

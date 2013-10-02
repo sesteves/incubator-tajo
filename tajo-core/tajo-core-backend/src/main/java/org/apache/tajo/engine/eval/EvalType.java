@@ -20,43 +20,59 @@ package org.apache.tajo.engine.eval;
 
 public enum EvalType {
   // Unary expression
-  NOT(NotEval.class),
+  NOT(NotEval.class, "!"),
 
   // Binary expression
   AND(BinaryEval.class),
   OR(BinaryEval.class),
-  EQUAL(BinaryEval.class),
+  EQUAL(BinaryEval.class, "="),
   IS_NULL(IsNullEval.class),
-  NOT_EQUAL(BinaryEval.class),
-  LTH(BinaryEval.class),
-  LEQ(BinaryEval.class),
-  GTH(BinaryEval.class),
-  GEQ(BinaryEval.class),
-  PLUS(BinaryEval.class),
-  MINUS(BinaryEval.class),
-  MODULAR(BinaryEval.class),
-  MULTIPLY(BinaryEval.class),
-  DIVIDE(BinaryEval.class),
+  NOT_EQUAL(BinaryEval.class, "<>"),
+  LTH(BinaryEval.class, "<"),
+  LEQ(BinaryEval.class, "<="),
+  GTH(BinaryEval.class, ">"),
+  GEQ(BinaryEval.class, ">="),
+  PLUS(BinaryEval.class, "+"),
+  MINUS(BinaryEval.class, "-"),
+  MODULAR(BinaryEval.class, "%"),
+  MULTIPLY(BinaryEval.class, "*"),
+  DIVIDE(BinaryEval.class, "/"),
 
   // Function
-  AGG_FUNCTION(AggFuncCallEval.class),
-  FUNCTION(FuncCallEval.class),
+  AGG_FUNCTION(AggregationFunctionCallEval.class),
+  FUNCTION(GeneralFunctionEval.class),
 
-  // Predicate
-  LIKE(LikeEval.class),
+  // String operator or pattern matching predicates
+  LIKE(LikePredicateEval.class),
+  SIMILAR_TO(SimilarToPredicateEval.class),
+  REGEX(RegexPredicateEval.class),
+  CONCATENATE(BinaryEval.class, "||"),
+
+  // Other predicates
   CASE(CaseWhenEval.class),
-  WHEN(CaseWhenEval.WhenEval.class),
+  IF_THEN(CaseWhenEval.IfThenEval.class),
   IN(InEval.class),
 
   // Value or Reference
+  CAST(CastEval.class),
+  ROW_CONSTANT(RowConstantEval.class),
   FIELD(FieldEval.class),
-  CONST(ConstEval.class),
-  ROW_CONSTANT(RowConstant.class);
+  CONST(ConstEval.class);
 
   private Class<? extends EvalNode> baseClass;
+  private String operatorName;
 
   EvalType(Class<? extends EvalNode> type) {
     this.baseClass = type;
+  }
+
+  EvalType(Class<? extends EvalNode> type, String text) {
+    this(type);
+    this.operatorName = text;
+  }
+
+  public String getOperatorName() {
+    return operatorName != null ? operatorName : name();
   }
 
   public Class<? extends EvalNode> getBaseClass() {

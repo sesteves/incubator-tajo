@@ -18,9 +18,11 @@
 
 package org.apache.tajo.engine.planner.logical;
 
+import org.apache.tajo.engine.planner.PlanString;
+
 public class LogicalRootNode extends UnaryNode implements Cloneable {
-  public LogicalRootNode() {
-    super(NodeType.ROOT);
+  public LogicalRootNode(int pid) {
+    super(pid, NodeType.ROOT);
   }
   
   public String toString() {
@@ -43,5 +45,10 @@ public class LogicalRootNode extends UnaryNode implements Cloneable {
   @Override
   public Object clone() throws CloneNotSupportedException {
     return super.clone();
+  }
+
+  @Override
+  public PlanString getPlanString() {
+    return new PlanString("Root");
   }
 }

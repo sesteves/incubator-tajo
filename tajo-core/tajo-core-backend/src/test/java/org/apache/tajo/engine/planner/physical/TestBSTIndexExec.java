@@ -21,6 +21,7 @@ package org.apache.tajo.engine.planner.physical;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.algebra.Expr;
@@ -40,7 +41,6 @@ import org.apache.tajo.engine.planner.logical.ScanNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.index.bst.BSTIndex;
 import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.TUtil;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -59,7 +59,7 @@ public class TestBSTIndexExec {
   private SQLAnalyzer analyzer;
   private LogicalPlanner planner;
   private LogicalOptimizer optimizer;
-  private StorageManager sm;
+  private AbstractStorageManager sm;
   private Schema idxSchema;
   private TupleComparator comp;
   private BSTIndex.BSTIndexWriter writer;
@@ -82,7 +82,7 @@ public class TestBSTIndexExec {
     catalog = util.getMiniCatalogCluster().getCatalog();
 
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/TestPhysicalPlanner");
-    sm = StorageManager.get(conf, workDir);
+    sm = StorageManagerFactory.getStorageManager(conf, workDir);
 
     idxPath = new Path(workDir, "test.idx");
 
@@ -94,7 +94,7 @@ public class TestBSTIndexExec {
     this.idxSchema = new Schema();
     idxSchema.addColumn("managerId", Type.INT4);
     SortSpec[] sortKeys = new SortSpec[1];
-    sortKeys[0] = new SortSpec(idxSchema.getColumn("managerId"), true, false);
+    sortKeys[0] = new SortSpec(idxSchema.getColumnByFQN("managerId"), true, false);
     this.comp = new TupleComparator(idxSchema, sortKeys);
 
     this.writer = new BSTIndex(conf).getIndexWriter(idxPath,
@@ -108,7 +108,7 @@ public class TestBSTIndexExec {
     fs = tablePath.getFileSystem(conf);
     fs.mkdirs(tablePath.getParent());
 
-    FileAppender appender = (FileAppender)StorageManager.getAppender(conf, meta, tablePath);
+    FileAppender appender = (FileAppender)StorageManagerFactory.getStorageManager(conf).getAppender(meta, tablePath);
     appender.init();
     Tuple tuple = new VTuple(meta.getSchema().getColumnNum());
     for (int i = 0; i < 10000; i++) {
@@ -150,14 +150,16 @@ public class TestBSTIndexExec {
 
   @Test
   public void testEqual() throws Exception {
-    
+    if(conf.getBoolean("tajo.storage.manager.v2", false)) {
+      return;
+    }
     this.rndKey = rnd.nextInt(250);
     final String QUERY = "select * from employee where managerId = " + rndKey;
     
     Fragment[] frags = StorageManager.splitNG(conf, "employee", meta, tablePath, Integer.MAX_VALUE);
     Path workDir = CommonTestingUtil.getTestDir("target/test-data/testEqual");
     TaskAttemptContext ctx = new TaskAttemptContext(conf,
-        TUtil.newQueryUnitAttemptId(), new Fragment[] { frags[0] }, workDir);
+        LocalTajoTestingUtility.newQueryUnitAttemptId(), new Fragment[] { frags[0] }, workDir);
     Expr expr = analyzer.parse(QUERY);
     LogicalPlan plan = planner.createPlan(expr);
     LogicalNode rootNode = optimizer.optimize(plan);
@@ -180,17 +182,17 @@ public class TestBSTIndexExec {
   }
 
   private class TmpPlanner extends PhysicalPlannerImpl {
-    public TmpPlanner(TajoConf conf, StorageManager sm) {
+    public TmpPlanner(TajoConf conf, AbstractStorageManager sm) {
       super(conf, sm);
     }
 
     @Override
     public PhysicalExec createScanPlan(TaskAttemptContext ctx, ScanNode scanNode)
         throws IOException {
-      Preconditions.checkNotNull(ctx.getTable(scanNode.getTableId()),
-          "Error: There is no table matched to %s", scanNode.getTableId());
+      Preconditions.checkNotNull(ctx.getTable(scanNode.getTableName()),
+          "Error: There is no table matched to %s", scanNode.getTableName());
 
-      Fragment[] fragments = ctx.getTables(scanNode.getTableId());
+      Fragment[] fragments = ctx.getTables(scanNode.getTableName());
       
       Datum[] datum = new Datum[]{DatumFactory.createInt4(rndKey)};
 

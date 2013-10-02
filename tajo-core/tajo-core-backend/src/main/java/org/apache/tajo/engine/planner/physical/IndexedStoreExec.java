@@ -18,34 +18,25 @@
 
 package org.apache.tajo.engine.planner.physical;
 
-import java.io.IOException;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.tajo.TaskAttemptContext;
-import org.apache.tajo.catalog.CatalogUtil;
-import org.apache.tajo.catalog.Column;
-import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.catalog.SortSpec;
-import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.PlannerUtil;
-import org.apache.tajo.storage.FileAppender;
-import org.apache.tajo.storage.RowStoreUtil;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.storage.TupleComparator;
-import org.apache.tajo.storage.VTuple;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.index.bst.BSTIndex;
+
+import java.io.IOException;
 
 public class IndexedStoreExec extends UnaryPhysicalExec {
   private static Log LOG = LogFactory.getLog(IndexedStoreExec.class);
   private final SortSpec[] sortSpecs;
-  private int[] indexKeys = null;
+  private int [] indexKeys = null;
   private Schema keySchema;
 
   private BSTIndex.BSTIndexWriter indexWriter;
@@ -53,8 +44,9 @@ public class IndexedStoreExec extends UnaryPhysicalExec {
   private FileAppender appender;
   private TableMeta meta;
 
-  public IndexedStoreExec(final TaskAttemptContext context, final StorageManager sm, final PhysicalExec child,
-      final Schema inSchema, final Schema outSchema, final SortSpec[] sortSpecs) throws IOException {
+  public IndexedStoreExec(final TaskAttemptContext context, final AbstractStorageManager sm,
+      final PhysicalExec child, final Schema inSchema, final Schema outSchema,
+      final SortSpec[] sortSpecs) throws IOException {
     super(context, inSchema, outSchema, child);
     this.sortSpecs = sortSpecs;
   }
@@ -66,7 +58,7 @@ public class IndexedStoreExec extends UnaryPhysicalExec {
     keySchema = PlannerUtil.sortSpecsToSchema(sortSpecs);
 
     Column col;
-    for (int i = 0; i < sortSpecs.length; i++) {
+    for (int i = 0 ; i < sortSpecs.length; i++) {
       col = sortSpecs[i].getSortKey();
       indexKeys[i] = inSchema.getColumnId(col.getQualifiedName());
     }
@@ -75,15 +67,17 @@ public class IndexedStoreExec extends UnaryPhysicalExec {
     this.comp = new TupleComparator(keySchema, sortSpecs);
     Path storeTablePath = new Path(context.getWorkDir(), "output");
     LOG.info("Output data directory: " + storeTablePath);
-    this.meta = CatalogUtil.newTableMeta(this.outSchema, CatalogProtos.StoreType.CSV);
+    this.meta = CatalogUtil
+        .newTableMeta(this.outSchema, CatalogProtos.StoreType.CSV);
     FileSystem fs = new RawLocalFileSystem();
     fs.mkdirs(storeTablePath);
-    this.appender = (FileAppender) StorageManager.getAppender(context.getConf(), meta, new Path(storeTablePath,
-        "output"));
+    this.appender = (FileAppender) StorageManagerFactory.getStorageManager(context.getConf()).getAppender(meta,
+        new Path(storeTablePath, "output"));
     this.appender.enableStats();
     this.appender.setJoinKeys(context.getJoinKeys());
     this.appender.init();
-    this.indexWriter = bst.getIndexWriter(new Path(storeTablePath, "index"), BSTIndex.TWO_LEVEL_INDEX, keySchema, comp);
+    this.indexWriter = bst.getIndexWriter(new Path(storeTablePath, "index"),
+        BSTIndex.TWO_LEVEL_INDEX, keySchema, comp);
     this.indexWriter.setLoadNum(100);
     this.indexWriter.open();
   }
@@ -95,7 +89,8 @@ public class IndexedStoreExec extends UnaryPhysicalExec {
     Tuple prevKeyTuple = null;
     long offset;
 
-    while ((tuple = child.next()) != null) {
+
+    while((tuple = child.next()) != null) {
       offset = appender.getOffset();
       appender.addTuple(tuple);
       keyTuple = new VTuple(keySchema.getColumnNum());

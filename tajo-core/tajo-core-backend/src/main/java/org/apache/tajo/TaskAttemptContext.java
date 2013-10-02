@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.storage.Fragment;
 
 import java.io.File;
@@ -37,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.CountDownLatch;
+
 
 /**
  * Contains the information about executing subquery.
@@ -60,6 +62,8 @@ public class TaskAttemptContext {
   private Path outputPath;
   private List<Integer> joinKeys;
   private Map<Integer, Long> histogram;
+  private DataChannel dataChannel;
+  private Enforcer enforcer;
 
   public TaskAttemptContext(TajoConf conf, final QueryUnitAttemptId queryId,
                             final Fragment[] fragments,
@@ -94,6 +98,22 @@ public class TaskAttemptContext {
   public void setState(TaskAttemptState state) {
     this.state = state;
     LOG.info("Query status of " + getTaskId() + " is changed to " + state);
+  }
+
+  public void setDataChannel(DataChannel dataChannel) {
+    this.dataChannel = dataChannel;
+  }
+
+  public DataChannel getDataChannel() {
+    return dataChannel;
+  }
+
+  public void setEnforcer(Enforcer enforcer) {
+    this.enforcer = enforcer;
+  }
+
+  public Enforcer getEnforcer() {
+    return this.enforcer;
   }
 
   public boolean hasResultStats() {

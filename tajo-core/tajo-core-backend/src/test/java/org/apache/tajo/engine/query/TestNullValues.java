@@ -44,17 +44,18 @@ public class TestNullValues {
     Schema schema = new Schema();
     schema.addColumn("col1", Type.INT4);
     schema.addColumn("col2", Type.TEXT);
+    schema.addColumn("col3", Type.FLOAT4);
     Schema [] schemas = new Schema[] {schema};
     String [] data = {
-        "1|filled|",
+        "1|filled|0.1",
         "2||",
-        "3|filled|"
+        "3|filled|0.2"
     };
     Options opts = new Options();
     opts.put(CSVFile.DELIMITER, "|");
     ResultSet res = TajoTestingCluster
         .run(table, schemas, opts, new String[][]{data},
-            "select * from nulltable1 where col2 is null");
+            "select * from nulltable1 where col3 is null");
     try {
       assertTrue(res.next());
       assertEquals(2, res.getInt(1));
@@ -73,14 +74,14 @@ public class TestNullValues {
     Schema [] schemas = new Schema[] {schema};
     String [] data = {
         "1|filled|",
-        "2||",
+        "||",
         "3|filled|"
     };
     Options opts = new Options();
     opts.put(CSVFile.DELIMITER, "|");
     ResultSet res = TajoTestingCluster
         .run(table, schemas, opts, new String[][]{data},
-            "select * from nulltable2 where col2 is not null");
+            "select * from nulltable2 where col1 is not null");
     try {
       assertTrue(res.next());
       assertEquals(1, res.getInt(1));
@@ -116,6 +117,40 @@ public class TestNullValues {
     ResultSet res = TajoTestingCluster
         .run(table, schemas, opts, new String[][]{data},
             "select * from nulltable3 where col1 is null and col2 is null and col3 is null and col4 = 43578");
+    try {
+      assertTrue(res.next());
+      assertEquals(43578, res.getLong(4));
+      assertFalse(res.next());
+    } finally {
+      res.close();
+    }
+  }
+
+  @Test
+  public final void testIsNotNull3() throws Exception {
+    String [] table = new String[] {"nulltable4"};
+    Schema schema = new Schema();
+    schema.addColumn("col1", Type.INT8);
+    schema.addColumn("col2", Type.INT8);
+    schema.addColumn("col3", Type.INT8);
+    schema.addColumn("col4", Type.INT8);
+    schema.addColumn("col5", Type.INT8);
+    schema.addColumn("col6", Type.INT8);
+    schema.addColumn("col7", Type.INT8);
+    schema.addColumn("col8", Type.INT8);
+    schema.addColumn("col9", Type.INT8);
+    schema.addColumn("col10", Type.INT8);
+    Schema [] schemas = new Schema[] {schema};
+    String [] data = {
+        "\\N,,,,672287821,",
+        ",\\N,,43578"
+    };
+    Options opts = new Options();
+    opts.put(CSVFile.DELIMITER, ",");
+    opts.put(CSVFile.NULL, "\\N");
+    ResultSet res = TajoTestingCluster
+        .run(table, schemas, opts, new String[][]{data},
+            "select * from nulltable4 where col1 is null and col2 is null and col3 is null and col5 is null and col4 = 43578");
     try {
       assertTrue(res.next());
       assertEquals(43578, res.getLong(4));

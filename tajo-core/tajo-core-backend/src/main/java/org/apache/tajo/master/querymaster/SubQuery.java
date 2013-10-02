@@ -22,7 +22,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
@@ -31,26 +30,32 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
 import org.apache.hadoop.yarn.util.Records;
+import org.apache.tajo.DataChannel;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitId;
 import org.apache.tajo.catalog.CatalogUtil;
+import org.apache.tajo.catalog.Options;
 import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.ColumnStat;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
 import org.apache.tajo.catalog.statistics.TableStat;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.PlannerUtil;
+import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.GroupbyNode;
 import org.apache.tajo.engine.planner.logical.NodeType;
 import org.apache.tajo.engine.planner.logical.ScanNode;
-import org.apache.tajo.engine.planner.logical.StoreTableNode;
-import org.apache.tajo.master.*;
+import org.apache.tajo.master.ExecutionBlock;
+import org.apache.tajo.master.TaskRunnerGroupEvent;
 import org.apache.tajo.master.TaskRunnerGroupEvent.EventType;
+import org.apache.tajo.master.TaskScheduler;
+import org.apache.tajo.master.TaskSchedulerImpl;
 import org.apache.tajo.master.event.*;
+import org.apache.tajo.storage.AbstractStorageManager;
 import org.apache.tajo.storage.Fragment;
-import org.apache.tajo.storage.StorageManager;
 
 import java.io.IOException;
 import java.util.*;
@@ -60,6 +65,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static org.apache.tajo.conf.TajoConf.ConfVars;
+import static org.apache.tajo.ipc.TajoWorkerProtocol.PartitionType;
 
 
 /**
@@ -69,12 +75,13 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   private static final Log LOG = LogFactory.getLog(SubQuery.class);
 
-  private QueryContext queryContext;
+  private MasterPlan masterPlan;
   private ExecutionBlock block;
   private int priority;
   private TableMeta meta;
+  private TableStat statistics;
   private EventHandler eventHandler;
-  private final StorageManager sm;
+  private final AbstractStorageManager sm;
   private TaskSchedulerImpl taskScheduler;
   private QueryMasterTask.QueryMasterTaskContext context;
 
@@ -136,8 +143,9 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   private int completedTaskCount = 0;
 
-  public SubQuery(QueryMasterTask.QueryMasterTaskContext context, ExecutionBlock block, StorageManager sm) {
+  public SubQuery(QueryMasterTask.QueryMasterTaskContext context, MasterPlan masterPlan, ExecutionBlock block, AbstractStorageManager sm) {
     this.context = context;
+    this.masterPlan = masterPlan;
     this.block = block;
     this.sm = sm;
     this.eventHandler = context.getEventHandler();
@@ -155,6 +163,14 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   public QueryMasterTask.QueryMasterTaskContext getContext() {
     return context;
+  }
+
+  public MasterPlan getMasterPlan() {
+    return masterPlan;
+  }
+
+  public DataChannel getDataChannel() {
+    return masterPlan.getOutgoingChannels(getId()).iterator().next();
   }
 
   public EventHandler getEventHandler() {
@@ -231,12 +247,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     return this.priority;
   }
 
-  public StorageManager getStorageManager() {
+  public AbstractStorageManager getStorageManager() {
     return sm;
-  }
-  
-  public SubQuery getChildQuery(ScanNode scanForChild) {
-    return context.getSubQuery(block.getChildBlock(scanForChild).getId());
   }
   
   public ExecutionBlockId getId() {
@@ -251,17 +263,13 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     return tasks.get(qid);
   }
 
-  public void setTableMeta(TableMeta meta) {
-    this.meta = meta;
-  }
-
   @SuppressWarnings("UnusedDeclaration")
   public TableMeta getTableMeta() {
     return meta;
   }
 
   public TableStat getTableStat() {
-    return this.meta.getStat();
+    return statistics;
   }
 
   public String toString() {
@@ -297,17 +305,18 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
   }
 
-  private static TableStat computeStatFromUnionBlock(SubQuery unit) {
+  public static TableStat computeStatFromUnionBlock(SubQuery subQuery) {
     TableStat stat = new TableStat();
     TableStat childStat;
     long avgRows = 0, numBytes = 0, numRows = 0;
     int numBlocks = 0, numPartitions = 0;
     List<ColumnStat> columnStats = Lists.newArrayList();
 
-    Iterator<ExecutionBlock> it = unit.getBlock().getChildBlocks().iterator();
+    MasterPlan masterPlan = subQuery.getMasterPlan();
+    Iterator<ExecutionBlock> it = masterPlan.getChilds(subQuery.getBlock()).iterator();
     while (it.hasNext()) {
       ExecutionBlock block = it.next();
-      SubQuery childSubQuery = unit.context.getSubQuery(block.getId());
+      SubQuery childSubQuery = subQuery.context.getSubQuery(block.getId());
       childStat = childSubQuery.getTableStat();
       avgRows += childStat.getAvgRows();
       columnStats.addAll(childStat.getColumnStats());
@@ -326,22 +335,6 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     return stat;
   }
 
-  public TableMeta buildTableMeta() throws IOException {
-    finishTime = context.getClock().getTime();
-
-    TableStat stat;
-    if (block.hasUnion()) {
-      stat = computeStatFromUnionBlock(this);
-    } else {
-      stat = computeStatFromTasks();
-    }
-
-    StoreTableNode storeTableNode = getBlock().getStoreTableNode();
-    TableMeta meta = toTableMeta(storeTableNode);
-    meta.setStat(stat);
-    return meta;
-  }
-
   private TableStat computeStatFromTasks() {
     List<TableStat> stats = Lists.newArrayList();
     for (QueryUnit unit : getQueryUnits()) {
@@ -349,26 +342,6 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
     TableStat tableStat = StatisticsUtil.aggregateTableStat(stats);
     return tableStat;
-  }
-
-  private TableMeta writeStat(SubQuery subQuery, TableStat stat)
-      throws IOException {
-    ExecutionBlock execBlock = subQuery.getBlock();
-    StoreTableNode storeTableNode = execBlock.getStoreTableNode();
-    TableMeta meta = toTableMeta(storeTableNode);
-    meta.setStat(stat);
-    //sm.writeTableMeta(sm.getTablePath(execBlock.getOutputName()), meta);
-    return meta;
-  }
-
-  private static TableMeta toTableMeta(StoreTableNode store) {
-    if (store.hasOptions()) {
-      return CatalogUtil.newTableMeta(store.getOutSchema(),
-          store.getStorageType(), store.getOptions());
-    } else {
-      return CatalogUtil.newTableMeta(store.getOutSchema(),
-          store.getStorageType());
-    }
   }
 
   private void stopScheduler() {
@@ -386,15 +359,19 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   }
 
   private void finish() {
-    TableMeta meta = null;
-    try {
-      meta = buildTableMeta();
-    } catch (IOException e) {
-      e.printStackTrace();
+    TableStat stat;
+    if (block.hasUnion()) {
+      stat = computeStatFromUnionBlock(this);
+    } else {
+      stat = computeStatFromTasks();
     }
 
-    setTableMeta(meta);
+    DataChannel channel = masterPlan.getOutgoingChannels(getId()).get(0);
+    meta = CatalogUtil.newTableMeta(channel.getSchema(), CatalogProtos.StoreType.CSV, new Options());
+    meta.setStat(stat);
+    statistics = stat;
     setFinishTime();
+
     eventHandler.handle(new SubQuerySucceeEvent(getId(), meta));
   }
 
@@ -446,7 +423,9 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
           subQuery.finish();
           state = SubQueryState.SUCCEEDED;
         } else {
-          setRepartitionIfNecessary(subQuery);
+          ExecutionBlock parent = subQuery.getMasterPlan().getParent(subQuery.getBlock());
+          DataChannel channel = subQuery.getMasterPlan().getChannel(subQuery.getId(), parent.getId());
+          setRepartitionIfNecessary(subQuery, channel);
           createTasks(subQuery);
 
           if (subQuery.tasks.size() == 0) { // if there is no tasks
@@ -480,10 +459,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
      * If a parent block requires a repartition operation, the method sets proper repartition
      * methods and the number of partitions to a given subquery.
      */
-    private static void setRepartitionIfNecessary(SubQuery subQuery) {
-      if (subQuery.getBlock().hasParentBlock()) {
-        int numTasks = calculatePartitionNum(subQuery);
-        Repartitioner.setPartitionNumberForTwoPhase(subQuery, numTasks);
+    private static void setRepartitionIfNecessary(SubQuery subQuery, DataChannel channel) {
+      if (channel.getPartitionType() != PartitionType.NONE_PARTITION) {
+        int numTasks = calculatePartitionNum(subQuery, channel);
+        Repartitioner.setPartitionNumberForTwoPhase(subQuery, numTasks, channel);
       }
     }
 
@@ -494,27 +473,27 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
      * @param subQuery
      * @return
      */
-    public static int calculatePartitionNum(SubQuery subQuery) {
+    public static int calculatePartitionNum(SubQuery subQuery, DataChannel channel) {
       TajoConf conf = subQuery.context.getConf();
-      ExecutionBlock parent = subQuery.getBlock().getParentBlock();
+      MasterPlan masterPlan = subQuery.getMasterPlan();
+      ExecutionBlock parent = masterPlan.getParent(subQuery.getBlock());
 
       GroupbyNode grpNode = null;
       if (parent != null) {
-        grpNode = (GroupbyNode) PlannerUtil.findTopNode(
-            parent.getPlan(), NodeType.GROUP_BY);
+        grpNode = PlannerUtil.findTopNode(parent.getPlan(), NodeType.GROUP_BY);
       }
 
       // Is this subquery the first step of join?
       if (parent != null && parent.getScanNodes().length == 2) {
-        Iterator<ExecutionBlock> child = parent.getChildBlocks().iterator();
+        List<ExecutionBlock> childs = masterPlan.getChilds(parent);
 
         // for inner
-        ExecutionBlock outer = child.next();
-        long outerVolume = getInputVolume(subQuery.context, outer);
+        ExecutionBlock outer = childs.get(0);
+        long outerVolume = getInputVolume(subQuery.masterPlan, subQuery.context, outer);
 
         // for inner
-        ExecutionBlock inner = child.next();
-        long innerVolume = getInputVolume(subQuery.context, inner);
+        ExecutionBlock inner = childs.get(1);
+        long innerVolume = getInputVolume(subQuery.masterPlan, subQuery.context, inner);
         LOG.info("Outer volume: " + Math.ceil((double)outerVolume / 1048576));
         LOG.info("Inner volume: " + Math.ceil((double)innerVolume / 1048576));
 
@@ -534,7 +513,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         if (grpNode.getGroupingColumns().length == 0) {
           return 1;
         } else {
-          long volume = getInputVolume(subQuery.context, subQuery.block);
+          long volume = getInputVolume(subQuery.masterPlan, subQuery.context, subQuery.block);
 
           int mb = (int) Math.ceil((double)volume / 1048576);
           LOG.info("Table's volume is approximately " + mb + " MB");
@@ -546,7 +525,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         }
       } else {
         LOG.info("============>>>>> Unexpected Case! <<<<<================");
-        long volume = getInputVolume(subQuery.context, subQuery.block);
+        long volume = getInputVolume(subQuery.masterPlan, subQuery.context, subQuery.block);
 
         int mb = (int) Math.ceil((double)volume / 1048576);
         LOG.info("Table's volume is approximately " + mb + " MB");
@@ -558,9 +537,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
     }
 
     private static void createTasks(SubQuery subQuery) throws IOException {
+      MasterPlan masterPlan = subQuery.getMasterPlan();
       ExecutionBlock execBlock = subQuery.getBlock();
       QueryUnit [] tasks;
-      if (execBlock.isLeafBlock() && execBlock.getScanNodes().length == 1) { // Case 1: Just Scan
+      if (subQuery.getMasterPlan().isLeaf(execBlock.getId()) && execBlock.getScanNodes().length == 1) { // Case 1: Just Scan
         tasks = createLeafTasks(subQuery);
 
       } else if (execBlock.getScanNodes().length > 1) { // Case 2: Join
@@ -568,9 +548,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
       } else { // Case 3: Others (Sort or Aggregation)
         int numTasks = getNonLeafTaskNum(subQuery);
-        ExecutionBlockId childId = subQuery.getBlock().getChildBlocks().iterator().next().getId();
+        ExecutionBlockId childId = masterPlan.getChilds(subQuery.getBlock()).get(0).getId();
         SubQuery child = subQuery.context.getSubQuery(childId);
-        tasks = Repartitioner.createNonLeafTask(subQuery, child, numTasks);
+        DataChannel channel = masterPlan.getChannel(child.getId(), subQuery.getId());
+        tasks = Repartitioner.createNonLeafTask(masterPlan, subQuery, child, channel, numTasks);
       }
 
       LOG.info("Create " + tasks.length + " Tasks");
@@ -588,7 +569,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
      */
     public static int getNonLeafTaskNum(SubQuery subQuery) {
       // Getting intermediate data size
-      long volume = getInputVolume(subQuery.context, subQuery.getBlock());
+      long volume = getInputVolume(subQuery.getMasterPlan(), subQuery.context, subQuery.getBlock());
 
       int mb = (int) Math.ceil((double)volume / 1048576);
       LOG.info("Table's volume is approximately " + mb + " MB");
@@ -598,15 +579,15 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       return maxTaskNum;
     }
 
-    public static long getInputVolume(QueryMasterTask.QueryMasterTaskContext context, ExecutionBlock execBlock) {
+    public static long getInputVolume(MasterPlan masterPlan, QueryMasterTask.QueryMasterTaskContext context, ExecutionBlock execBlock) {
       Map<String, TableDesc> tableMap = context.getTableDescMap();
-      if (execBlock.isLeafBlock()) {
+      if (masterPlan.isLeaf(execBlock)) {
         ScanNode outerScan = execBlock.getScanNodes()[0];
-        TableStat stat = tableMap.get(outerScan.getFromTable().getTableName()).getMeta().getStat();
+        TableStat stat = tableMap.get(outerScan.getCanonicalName()).getMeta().getStat();
         return stat.getNumBytes();
       } else {
         long aggregatedVolume = 0;
-        for (ExecutionBlock childBlock : execBlock.getChildBlocks()) {
+        for (ExecutionBlock childBlock : masterPlan.getChilds(execBlock)) {
           SubQuery subquery = context.getSubQuery(childBlock.getId());
           aggregatedVolume += subquery.getTableStat().getNumBytes();
         }
@@ -625,7 +606,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
       final Resource resource = Records.newRecord(Resource.class);
 
-      resource.setMemory(2048);
+      resource.setMemory(2000);
 
       LOG.info("Request Container for " + subQuery.getId() + " containers=" + numRequest);
 
@@ -646,12 +627,12 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       Path inputPath;
 
       ScanNode scan = scans[0];
-      TableDesc desc = subQuery.context.getTableDescMap().get(scan.getFromTable().getTableName());
+      TableDesc desc = subQuery.context.getTableDescMap().get(scan.getCanonicalName());
       inputPath = desc.getPath();
       meta = desc.getMeta();
 
       // TODO - should be change the inner directory
-      List<Fragment> fragments = subQuery.getStorageManager().getSplits(scan.getTableId(), meta, inputPath);
+      List<Fragment> fragments = subQuery.getStorageManager().getSplits(scan.getCanonicalName(), meta, inputPath);
 
       QueryUnit queryUnit;
       List<QueryUnit> queryUnits = new ArrayList<QueryUnit>();

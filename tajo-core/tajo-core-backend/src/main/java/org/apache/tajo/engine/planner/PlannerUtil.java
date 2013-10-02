@@ -20,6 +20,7 @@ package org.apache.tajo.engine.planner;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.common.collect.ObjectArrays;
 import com.google.common.collect.Sets;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -34,10 +35,7 @@ import org.apache.tajo.engine.planner.logical.*;
 import org.apache.tajo.engine.query.exception.InvalidQueryException;
 import org.apache.tajo.storage.TupleComparator;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class PlannerUtil {
   private static final Log LOG = LogFactory.getLog(PlannerUtil.class);
@@ -61,24 +59,9 @@ public class PlannerUtil {
     ScanNode scan;
     for (int i = 0; i < scans.length; i++) {
       scan = (ScanNode) scans[i];
-      tableNames[i] = scan.getTableId();
+      tableNames[i] = scan.getCanonicalName();
     }
     return tableNames;
-  }
-  
-  public static LogicalNode insertNode(LogicalNode parent, LogicalNode newNode) {
-    Preconditions.checkArgument(parent instanceof UnaryNode);
-    Preconditions.checkArgument(newNode instanceof UnaryNode);
-    
-    UnaryNode p = (UnaryNode) parent;
-    LogicalNode c = p.getChild();
-    UnaryNode m = (UnaryNode) newNode;
-    m.setInSchema(c.getOutSchema());
-    m.setOutSchema(c.getOutSchema());
-    m.setChild(c);
-    p.setChild(m);
-    
-    return p;
   }
   
   /**
@@ -126,91 +109,64 @@ public class PlannerUtil {
     }
     parentNode.setChild(newNode);
   }
-  
-  public static LogicalNode insertOuterNode(LogicalNode parent, LogicalNode outer) {
-    Preconditions.checkArgument(parent instanceof BinaryNode);
-    Preconditions.checkArgument(outer instanceof UnaryNode);
-    
-    BinaryNode p = (BinaryNode) parent;
-    LogicalNode c = p.getLeftChild();
-    UnaryNode m = (UnaryNode) outer;
-    m.setInSchema(c.getOutSchema());
-    m.setOutSchema(c.getOutSchema());
-    m.setChild(c);
-    p.setLeftChild(m);
-    return p;
-  }
-  
-  public static LogicalNode insertInnerNode(LogicalNode parent, LogicalNode inner) {
-    Preconditions.checkArgument(parent instanceof BinaryNode);
-    Preconditions.checkArgument(inner instanceof UnaryNode);
-    
-    BinaryNode p = (BinaryNode) parent;
-    LogicalNode c = p.getRightChild();
-    UnaryNode m = (UnaryNode) inner;
-    m.setInSchema(c.getOutSchema());
-    m.setOutSchema(c.getOutSchema());
-    m.setChild(c);
-    p.setRightChild(m);
-    return p;
-  }
-  
-  public static LogicalNode insertNode(LogicalNode parent, 
-      LogicalNode left, LogicalNode right) {
-    Preconditions.checkArgument(parent instanceof BinaryNode);
-    Preconditions.checkArgument(left instanceof UnaryNode);
-    Preconditions.checkArgument(right instanceof UnaryNode);
-    
-    BinaryNode p = (BinaryNode)parent;
-    LogicalNode lc = p.getLeftChild();
-    LogicalNode rc = p.getRightChild();
-    UnaryNode lm = (UnaryNode)left;
-    UnaryNode rm = (UnaryNode)right;
-    lm.setInSchema(lc.getOutSchema());
-    lm.setOutSchema(lc.getOutSchema());
-    lm.setChild(lc);
-    rm.setInSchema(rc.getOutSchema());
-    rm.setOutSchema(rc.getOutSchema());
-    rm.setChild(rc);
-    p.setLeftChild(lm);
-    p.setRightChild(rm);
-    return p;
-  }
-  
-  public static LogicalNode transformGroupbyTo2P(GroupbyNode gp) {
-    Preconditions.checkNotNull(gp);
-        
+
+  public static GroupbyNode transformGroupbyTo2P(GroupbyNode groupBy) {
+    Preconditions.checkNotNull(groupBy);
+
+    GroupbyNode child = null;
+
+    // cloning groupby node
     try {
-      // cloning groupby node
-      GroupbyNode child = (GroupbyNode) gp.clone();
+      child = (GroupbyNode) groupBy.clone();
+    } catch (CloneNotSupportedException e) {
+      e.printStackTrace();
+    }
 
-      List<Target> newChildTargets = Lists.newArrayList();
-      Target[] secondTargets = gp.getTargets();
-      Target[] firstTargets = child.getTargets();
+    List<Target> firstStepTargets = Lists.newArrayList();
+    Target[] secondTargets = groupBy.getTargets();
+    Target[] firstTargets = child.getTargets();
 
-      Target second;
-      Target first;
-      int targetId =  0;
-      for (int i = 0; i < firstTargets.length; i++) {
-        second = secondTargets[i];
-        first = firstTargets[i];
+    Target second;
+    Target first;
+    int targetId =  0;
+    for (int i = 0; i < firstTargets.length; i++) {
+      second = secondTargets[i];
+      first = firstTargets[i];
 
-        List<AggFuncCallEval> secondFuncs = EvalTreeUtil
-            .findDistinctAggFunction(second.getEvalTree());
-        List<AggFuncCallEval> firstFuncs = EvalTreeUtil.findDistinctAggFunction(first.getEvalTree());
+      List<AggregationFunctionCallEval> secondStepFunctions = EvalTreeUtil.findDistinctAggFunction(second.getEvalTree());
+      List<AggregationFunctionCallEval> firstStepFunctions = EvalTreeUtil.findDistinctAggFunction(first.getEvalTree());
 
-        if (firstFuncs.size() == 0) {
-          newChildTargets.add(first);
-          targetId++;
-        } else {
-          for (AggFuncCallEval func : firstFuncs) {
-            func.setFirstPhase();
-            Target newTarget = new Target(func);
+      if (firstStepFunctions.size() == 0) {
+        firstStepTargets.add(first);
+        targetId++;
+      } else {
+        for (AggregationFunctionCallEval func : firstStepFunctions) {
+          Target newTarget;
+
+          if (func.isDistinct()) {
+            List<Column> fields = EvalTreeUtil.findAllColumnRefs(func);
+            newTarget = new Target(new FieldEval(fields.get(0)));
             String targetName = "column_" + (targetId++);
             newTarget.setAlias(targetName);
 
-            AggFuncCallEval secondFunc = null;
-            for (AggFuncCallEval sf : secondFuncs) {
+            AggregationFunctionCallEval secondFunc = null;
+            for (AggregationFunctionCallEval sf : secondStepFunctions) {
+              if (func.equals(sf)) {
+                secondFunc = sf;
+                break;
+              }
+            }
+
+            secondFunc.setArgs(new EvalNode [] {new FieldEval(
+                new Column(targetName, newTarget.getEvalTree().getValueType()[0]))});
+          } else {
+            func.setFirstPhase();
+            newTarget = new Target(func);
+            String targetName = "column_" + (targetId++);
+            newTarget.setAlias(targetName);
+
+            AggregationFunctionCallEval secondFunc = null;
+            for (AggregationFunctionCallEval sf : secondStepFunctions) {
               if (func.equals(sf)) {
                 secondFunc = sf;
                 break;
@@ -222,58 +178,32 @@ public class PlannerUtil {
               secondFunc.setArgs(new EvalNode [] {new FieldEval(
                   new Column(targetName, newTarget.getEvalTree().getValueType()[0]))});
             }
-            newChildTargets.add(newTarget);
           }
+          firstStepTargets.add(newTarget);
         }
       }
 
-      Target[] targetArray = newChildTargets.toArray(new Target[newChildTargets.size()]);
+      // Getting new target list and updating input/output schema from the new target list.
+      Target[] targetArray = firstStepTargets.toArray(new Target[firstStepTargets.size()]);
+      Schema targetSchema = PlannerUtil.targetToSchema(targetArray);
+      List<Target> newTarget = Lists.newArrayList();
+      for (Column column : groupBy.getGroupingColumns()) {
+        if (!targetSchema.contains(column.getQualifiedName())) {
+          newTarget.add(new Target(new FieldEval(column)));
+        }
+      }
+      targetArray = ObjectArrays.concat(targetArray, newTarget.toArray(new Target[newTarget.size()]), Target.class);
+
       child.setTargets(targetArray);
       child.setOutSchema(PlannerUtil.targetToSchema(targetArray));
       // set the groupby chaining
-      gp.setChild(child);
-      gp.setInSchema(child.getOutSchema());
-    } catch (CloneNotSupportedException e) {
-      LOG.error(e);
+      groupBy.setChild(child);
+      groupBy.setInSchema(child.getOutSchema());
+
     }
-    
-    return gp;
+    return child;
   }
-  
-  public static LogicalNode transformSortTo2P(SortNode sort) {
-    Preconditions.checkNotNull(sort);
-    
-    try {
-      SortNode child = (SortNode) sort.clone();
-      sort.setChild(child);
-      sort.setInSchema(child.getOutSchema());
-      sort.setOutSchema(child.getOutSchema());
-    } catch (CloneNotSupportedException e) {
-      LOG.error(e);
-    }
-    return sort;
-  }
-  
-  public static LogicalNode transformGroupbyTo2PWithStore(GroupbyNode gb, 
-      String tableId) {
-    GroupbyNode groupby = (GroupbyNode) transformGroupbyTo2P(gb);
-    return insertStore(groupby, tableId);
-  }
-  
-  public static LogicalNode transformSortTo2PWithStore(SortNode sort, 
-      String tableId) {
-    SortNode sort2p = (SortNode) transformSortTo2P(sort);
-    return insertStore(sort2p, tableId);
-  }
-  
-  private static LogicalNode insertStore(LogicalNode parent, 
-      String tableId) {
-    StoreTableNode store = new StoreTableNode(tableId);
-    store.setLocal(true);
-    insertNode(parent, store);
-    
-    return parent;
-  }
+
   
   /**
    * Find the top logical node matched to type from the given node
@@ -282,7 +212,7 @@ public class PlannerUtil {
    * @param type to find
    * @return a found logical node
    */
-  public static LogicalNode findTopNode(LogicalNode node, NodeType type) {
+  public static <T extends LogicalNode> T findTopNode(LogicalNode node, NodeType type) {
     Preconditions.checkNotNull(node);
     Preconditions.checkNotNull(type);
     
@@ -292,7 +222,7 @@ public class PlannerUtil {
     if (finder.getFoundNodes().size() == 0) {
       return null;
     }
-    return finder.getFoundNodes().get(0);
+    return (T) finder.getFoundNodes().get(0);
   }
 
   /**
@@ -323,7 +253,7 @@ public class PlannerUtil {
    * @param type to find
    * @return the parent node of a found logical node
    */
-  public static LogicalNode findTopParentNode(LogicalNode node, NodeType type) {
+  public static <T extends LogicalNode> T findTopParentNode(LogicalNode node, NodeType type) {
     Preconditions.checkNotNull(node);
     Preconditions.checkNotNull(type);
     
@@ -333,7 +263,7 @@ public class PlannerUtil {
     if (finder.getFoundNodes().size() == 0) {
       return null;
     }
-    return finder.getFoundNodes().get(0);
+    return (T) finder.getFoundNodes().get(0);
   }
 
   public static boolean canBeEvaluated(EvalNode eval, LogicalNode node) {
@@ -344,8 +274,8 @@ public class PlannerUtil {
       Set<String> tableIds = Sets.newHashSet();
       // getting distinct table references
       for (Column col : columnRefs) {
-        if (!tableIds.contains(col.getTableName())) {
-          tableIds.add(col.getTableName());
+        if (!tableIds.contains(col.getQualifier())) {
+          tableIds.add(col.getQualifier());
         }
       }
 
@@ -372,30 +302,44 @@ public class PlannerUtil {
 
       return i.contains(it.next()) && o.contains(it.next());
 
-    } else {
-      if (node instanceof ScanNode) {
-        ScanNode scan = (ScanNode) node;
+    } else if (node instanceof ScanNode) {
 
-        for (Column col : columnRefs) {
-          if (scan.getTableId().equals(col.getTableName())) {
-            Column found = node.getInSchema().getColumnByName(col.getColumnName());
-            if (found == null) {
-              return false;
-            }
-          } else {
+      RelationNode scan = (RelationNode) node;
+
+      for (Column col : columnRefs) {
+        if (scan.getCanonicalName().equals(col.getQualifier())) {
+          Column found = node.getInSchema().getColumnByName(col.getColumnName());
+          if (found == null) {
             return false;
           }
-        }
-      } else {
-        for (Column col : columnRefs) {
-          if (!node.getInSchema().contains(col.getQualifiedName())) {
-            return false;
-          }
+        } else {
+          return false;
         }
       }
 
-      return true;
+    } else if (node instanceof TableSubQueryNode) {
+      TableSubQueryNode subQueryNode = (TableSubQueryNode) node;
+      for (Column col : columnRefs) {
+        if (subQueryNode.getCanonicalName().equals(col.getQualifier())) {
+          Column found = node.getOutSchema().getColumnByName(col.getColumnName());
+          if (found == null) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+
+    } else {
+
+      for (Column col : columnRefs) {
+        if (!node.getInSchema().contains(col.getQualifiedName())) {
+          return false;
+        }
+      }
     }
+
+    return true;
   }
 
   private static class LogicalNodeFinder implements LogicalNodeVisitor {
@@ -460,98 +404,6 @@ public class PlannerUtil {
       return list;
     }
   }
-  
-  public static Set<Column> collectColumnRefs(LogicalNode node) {
-    ColumnRefCollector collector = new ColumnRefCollector();
-    node.postOrder(collector);
-    return collector.getColumns();
-  }
-  
-  private static class ColumnRefCollector implements LogicalNodeVisitor {
-    private Set<Column> collected = Sets.newHashSet();
-    
-    public Set<Column> getColumns() {
-      return this.collected;
-    }
-
-    @Override
-    public void visit(LogicalNode node) {
-      Set<Column> temp;
-      switch (node.getType()) {
-      case PROJECTION:
-        ProjectionNode projNode = (ProjectionNode) node;
-
-        for (Target t : projNode.getTargets()) {
-          temp = EvalTreeUtil.findDistinctRefColumns(t.getEvalTree());
-          if (!temp.isEmpty()) {
-            collected.addAll(temp);
-          }
-        }
-
-        break;
-
-      case SELECTION:
-        SelectionNode selNode = (SelectionNode) node;
-        temp = EvalTreeUtil.findDistinctRefColumns(selNode.getQual());
-        if (!temp.isEmpty()) {
-          collected.addAll(temp);
-        }
-
-        break;
-        
-      case GROUP_BY:
-        GroupbyNode groupByNode = (GroupbyNode)node;
-        collected.addAll(Lists.newArrayList(groupByNode.getGroupingColumns()));
-        for (Target t : groupByNode.getTargets()) {
-          temp = EvalTreeUtil.findDistinctRefColumns(t.getEvalTree());
-          if (!temp.isEmpty()) {
-            collected.addAll(temp);
-          }
-        }
-        if(groupByNode.hasHavingCondition()) {
-          temp = EvalTreeUtil.findDistinctRefColumns(groupByNode.
-              getHavingCondition());
-          if (!temp.isEmpty()) {
-            collected.addAll(temp);
-          }
-        }
-        
-        break;
-        
-      case SORT:
-        SortNode sortNode = (SortNode) node;
-        for (SortSpec key : sortNode.getSortKeys()) {
-          collected.add(key.getSortKey());
-        }
-        
-        break;
-        
-      case JOIN:
-        JoinNode joinNode = (JoinNode) node;
-        if (joinNode.hasJoinQual()) {
-          temp = EvalTreeUtil.findDistinctRefColumns(joinNode.getJoinQual());
-          if (!temp.isEmpty()) {
-            collected.addAll(temp);
-          }
-        }
-        
-        break;
-        
-      case SCAN:
-        ScanNode scanNode = (ScanNode) node;
-        if (scanNode.hasQual()) {
-          temp = EvalTreeUtil.findDistinctRefColumns(scanNode.getQual());
-          if (!temp.isEmpty()) {
-            collected.addAll(temp);
-          }
-        }
-
-        break;
-        
-      default:
-      }
-    }
-  }
 
   /**
    * fill targets with FieldEvals from a given schema
@@ -579,10 +431,24 @@ public class PlannerUtil {
   }
 
   public static SortSpec[] schemaToSortSpecs(Schema schema) {
-    SortSpec[] specs = new SortSpec[schema.getColumnNum()];
+    return schemaToSortSpecs(schema.toArray());
+  }
 
-    for (int i = 0; i < schema.getColumnNum(); i++) {
-      specs[i] = new SortSpec(schema.getColumn(i), true, false);
+  public static SortSpec[] schemaToSortSpecs(Column [] columns) {
+    SortSpec[] specs = new SortSpec[columns.length];
+
+    for (int i = 0; i < columns.length; i++) {
+      specs[i] = new SortSpec(columns[i], true, false);
+    }
+
+    return specs;
+  }
+
+  public static SortSpec [] columnsToSortSpec(Collection<Column> columns) {
+    SortSpec[] specs = new SortSpec[columns.size()];
+    int i = 0;
+    for (Column column : columns) {
+      specs[i++] = new SortSpec(column, true, false);
     }
 
     return specs;
@@ -609,7 +475,7 @@ public class PlannerUtil {
       List<Column> right = EvalTreeUtil.findAllColumnRefs(qual.getRightExpr());
 
       if (left.size() == 1 && right.size() == 1 &&
-          !left.get(0).getTableName().equals(right.get(0).getTableName()))
+          !left.get(0).getQualifier().equals(right.get(0).getQualifier()))
         return true;
     }
 
@@ -629,16 +495,31 @@ public class PlannerUtil {
     return new SortSpec[][] {outerSortSpec, innerSortSpec};
   }
 
-  public static TupleComparator[] getComparatorsFromJoinQual(EvalNode joinQual, Schema outer, Schema inner) {
-    SortSpec[][] sortSpecs = getSortKeysFromJoinQual(joinQual, outer, inner);
+  public static TupleComparator[] getComparatorsFromJoinQual(EvalNode joinQual, Schema leftSchema, Schema rightSchema) {
+    SortSpec[][] sortSpecs = getSortKeysFromJoinQual(joinQual, leftSchema, rightSchema);
     TupleComparator [] comparators = new TupleComparator[2];
-    comparators[0] = new TupleComparator(outer, sortSpecs[0]);
-    comparators[1] = new TupleComparator(inner, sortSpecs[1]);
+    comparators[0] = new TupleComparator(leftSchema, sortSpecs[0]);
+    comparators[1] = new TupleComparator(rightSchema, sortSpecs[1]);
     return comparators;
   }
 
-  public static List<Column []> getJoinKeyPairs(EvalNode joinQual, Schema outer, Schema inner) {
-    JoinKeyPairFinder finder = new JoinKeyPairFinder(outer, inner);
+  /**
+   * @return the first array contains left table's columns, and the second array contains right table's columns.
+   */
+  public static Column [][] joinJoinKeyForEachTable(EvalNode joinQual, Schema leftSchema, Schema rightSchema) {
+    List<Column []> joinKeys = getJoinKeyPairs(joinQual, leftSchema, rightSchema);
+    Column [] leftColumns = new Column[joinKeys.size()];
+    Column [] rightColumns = new Column[joinKeys.size()];
+    for (int i = 0; i < joinKeys.size(); i++) {
+      leftColumns[i] = joinKeys.get(i)[0];
+      rightColumns[i] = joinKeys.get(i)[1];
+    }
+
+    return new Column[][] {leftColumns, rightColumns};
+  }
+
+  public static List<Column []> getJoinKeyPairs(EvalNode joinQual, Schema leftSchema, Schema rightSchema) {
+    JoinKeyPairFinder finder = new JoinKeyPairFinder(leftSchema, rightSchema);
     joinQual.preOrder(finder);
     return finder.getPairs();
   }
@@ -717,12 +598,20 @@ public class PlannerUtil {
       }
       if (copy[i].getEvalTree().getType() == EvalType.FIELD) {
         FieldEval fieldEval = (FieldEval) copy[i].getEvalTree();
-        if (fieldEval.getColumnRef().isQualified()) {
+        if (fieldEval.getColumnRef().hasQualifier()) {
           fieldEval.getColumnRef().setName(fieldEval.getColumnName());
         }
       }
     }
 
     return copy;
+  }
+
+  public static <T extends LogicalNode> T clone(LogicalNode node) {
+    try {
+      return (T) node.clone();
+    } catch (CloneNotSupportedException e) {
+      throw new RuntimeException(e);
+    }
   }
 }

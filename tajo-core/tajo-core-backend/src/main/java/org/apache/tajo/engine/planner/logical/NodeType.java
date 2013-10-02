@@ -38,14 +38,14 @@ public enum NodeType {
   LIMIT(LimitNode.class),
   JOIN(JoinNode.class),
   PROJECTION(ProjectionNode.class),
-  RECEIVE(ReceiveNode.class),
   ROOT(LogicalRootNode.class),
-  SEND(SendNode.class),
   SCAN(ScanNode.class),
   SELECTION(SelectionNode.class),
   STORE(StoreTableNode.class),
   SORT(SortNode.class),
-  UNION(UnionNode.class);
+  UNION(UnionNode.class),
+  TABLE_SUBQUERY(TableSubQueryNode.class);
+
 
   private final Class<? extends LogicalNode> baseClass;
 

@@ -124,11 +124,12 @@ public class QueryInProgress extends CompositeService {
       }
     }
 
+    super.stop();
+
     if(queryMasterRpc != null) {
       //TODO release to connection pool
       queryMasterRpc.close();
     }
-    super.stop();
   }
 
   @Override
@@ -207,6 +208,7 @@ public class QueryInProgress extends CompositeService {
           TajoWorkerProtocol.QueryExecutionRequestProto.newBuilder()
               .setQueryId(queryId.getProto())
               .setQueryContext(queryContext.getProto())
+              .setSql(PrimitiveProtos.StringProto.newBuilder().setValue(queryInfo.getSql()))
               .setLogicalPlanJson(PrimitiveProtos.StringProto.newBuilder().setValue(plan.toJson()).build())
               .build(), NullCallback.get());
       querySubmitted.set(true);
@@ -235,6 +237,8 @@ public class QueryInProgress extends CompositeService {
       this.queryInfo.setQueryMasterResource(queryInfo.getQueryMasterResource());
     }
     this.queryInfo.setQueryState(queryInfo.getQueryState());
+    this.queryInfo.setProgress(queryInfo.getProgress());
+    this.queryInfo.setFinishTime(queryInfo.getFinishTime());
 
     if(queryInfo.getLastMessage() != null && !queryInfo.getLastMessage().isEmpty()) {
       this.queryInfo.setLastMessage(queryInfo.getLastMessage());

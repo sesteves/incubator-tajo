@@ -39,18 +39,20 @@ public class InsertNode extends LogicalNode implements Cloneable {
   @Expose private LogicalNode subQuery;
 
 
-  public InsertNode(TableDesc desc, LogicalNode subQuery) {
-    super(NodeType.INSERT);
+  public InsertNode(int pid, TableDesc desc, LogicalNode subQuery) {
+    super(pid, NodeType.INSERT);
     this.targetTableDesc = desc;
     this.subQuery = subQuery;
     this.setInSchema(subQuery.getOutSchema());
+    this.setOutSchema(subQuery.getOutSchema());
   }
 
-  public InsertNode(Path location, LogicalNode subQuery) {
-    super(NodeType.INSERT);
+  public InsertNode(int pid, Path location, LogicalNode subQuery) {
+    super(pid, NodeType.INSERT);
     this.path = location;
     this.subQuery = subQuery;
     this.setInSchema(subQuery.getOutSchema());
+    this.setOutSchema(subQuery.getOutSchema());
   }
 
   public boolean isOverwrite() {
@@ -158,7 +160,7 @@ public class InsertNode extends LogicalNode implements Cloneable {
     sb.append("INTO");
 
     if (hasTargetTable()) {
-      sb.append(targetTableDesc);
+      sb.append(targetTableDesc.getName());
     }
 
     if (hasPath()) {
@@ -179,5 +181,17 @@ public class InsertNode extends LogicalNode implements Cloneable {
   @Override
   public void postOrder(LogicalNodeVisitor visitor) {
     visitor.visit(this);    
+  }
+
+  @Override
+  public PlanString getPlanString() {
+    PlanString planString = new PlanString("INSERT");
+    planString.addExplan(" INTO ");
+    if (hasTargetTable()) {
+      planString.addExplan(getTargetTable().getName());
+    } else {
+      planString.addExplan("LOCATION " + path);
+    }
+    return planString;
   }
 }

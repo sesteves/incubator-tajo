@@ -20,33 +20,44 @@ package org.apache.tajo.engine.planner.logical;
 
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.Column;
+import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.engine.eval.EvalNode;
+import org.apache.tajo.engine.planner.PlanString;
 import org.apache.tajo.engine.planner.Target;
 import org.apache.tajo.util.TUtil;
 
 public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
 	@Expose private Column [] columns;
+  @Expose private Schema havingSchema;
 	@Expose private EvalNode havingCondition = null;
 	@Expose private Target [] targets;
+  @Expose private boolean hasDistinct = false;
 	
-	public GroupbyNode() {
-		super();
-	}
-	
-	public GroupbyNode(final Column [] columns) {
-		super(NodeType.GROUP_BY);
+	public GroupbyNode(int pid, final Column [] columns) {
+		super(pid, NodeType.GROUP_BY);
 		this.columns = columns;
 	}
 	
-	public GroupbyNode(final Column [] columns, 
-	    final EvalNode havingCondition) {
-    this(columns);
+	public GroupbyNode(int pid, final Column [] columns, final EvalNode havingCondition) {
+    this(pid, columns);
     this.havingCondition = havingCondition;
   }
-	
+
+  public final boolean isEmptyGrouping() {
+    return columns == null || columns.length == 0;
+  }
+
 	public final Column [] getGroupingColumns() {
 	  return this.columns;
 	}
+
+  public final boolean isDistinct() {
+    return hasDistinct;
+  }
+
+  public void setDistinct(boolean distinct) {
+    hasDistinct = distinct;
+  }
 	
 	public final boolean hasHavingCondition() {
 	  return this.havingCondition != null;
@@ -59,6 +70,14 @@ public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
 	public final void setHavingCondition(final EvalNode evalTree) {
 	  this.havingCondition = evalTree;
 	}
+
+  public final void setHavingSchema(Schema schema) {
+    this.havingSchema = schema;
+  }
+
+  public Schema getHavingSchema() {
+    return this.havingSchema;
+  }
 
   @Override
   public boolean hasTargets() {
@@ -142,5 +161,38 @@ public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
     }
 
     return grp;
+  }
+
+  @Override
+  public PlanString getPlanString() {
+    PlanString planStr = new PlanString("Aggregation");
+
+    StringBuilder sb = new StringBuilder();
+    sb.append("(");
+    Column [] groupingColumns = columns;
+    for (int j = 0; j < groupingColumns.length; j++) {
+      sb.append(groupingColumns[j].getColumnName());
+      if(j < groupingColumns.length - 1) {
+        sb.append(",");
+      }
+    }
+
+    sb.append(")");
+
+    planStr.appendTitle(sb.toString());
+
+    sb = new StringBuilder("target list: ");
+    for (int i = 0; i < targets.length; i++) {
+      sb.append(targets[i]);
+      if( i < targets.length - 1) {
+        sb.append(",");
+      }
+    }
+    planStr.addExplan(sb.toString());
+
+    planStr.addDetail("out schema:").appendDetail(getOutSchema().toString());
+    planStr.addDetail("in schema:").appendDetail(getInSchema().toString());
+
+    return planStr;
   }
 }

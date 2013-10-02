@@ -18,21 +18,19 @@
 
 package org.apache.tajo.datum;
 
-import org.apache.tajo.util.Bytes;
-
 import static org.apache.tajo.common.TajoDataTypes.Type;
 
 public class NullDatum extends Datum {
-  private static final NullDatum instance;
-  
+  private static NullDatum instance;
+
   static {
     instance = new NullDatum();
   }
-  
+
   private NullDatum() {
     super(Type.NULL);
   }
-  
+
   public static NullDatum get() {
     return instance;
   }
@@ -49,37 +47,42 @@ public class NullDatum extends Datum {
 
   @Override
   public short asInt2() {
-    return Short.MIN_VALUE;
+    return 0;
   }
 
   @Override
   public int asInt4() {
-    return Integer.MIN_VALUE;
+    return 0;
   }
 
   @Override
   public long asInt8() {
-    return Long.MIN_VALUE;
+    return 0;
   }
 
   @Override
   public byte[] asByteArray() {
-    return Bytes.toBytes("null");
+    return new byte[0];
   }
 
   @Override
   public float asFloat4() {
-    return Float.NaN;
+    return 0f;
   }
 
   @Override
   public double asFloat8() {
-    return Double.NaN;
+    return 0d;
   }
 
   @Override
   public String asChars() {
-    return "null";
+    return "";
+  }
+
+  @Override
+  public byte[] asTextBytes() {
+    return new byte[0];
   }
 
   @Override
@@ -99,6 +102,6 @@ public class NullDatum extends Datum {
 
   @Override
   public int hashCode() {
-    return 23244; // one of the prime number
+    return 0; // one of the prime number
   }
 }

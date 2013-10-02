@@ -64,7 +64,7 @@ public class TestEvalTreeUtil {
     util.startCatalogCluster();
     catalog = util.getMiniCatalogCluster().getCatalog();
     for (FunctionDesc funcDesc : TajoMaster.initBuiltinFunctions()) {
-      catalog.registerFunction(funcDesc);
+      catalog.createFunction(funcDesc);
     }
 
     Schema schema = new Schema();
@@ -80,7 +80,7 @@ public class TestEvalTreeUtil {
         FunctionType.GENERAL,
         CatalogUtil.newDataTypesWithoutLen(TajoDataTypes.Type.INT4),
         CatalogUtil.newDataTypesWithoutLen(TajoDataTypes.Type.INT4, TajoDataTypes.Type.INT4));
-    catalog.registerFunction(funcMeta);
+    catalog.createFunction(funcMeta);
 
     analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog);
@@ -106,7 +106,7 @@ public class TestEvalTreeUtil {
     if (plan.getRootBlock().getRoot().getType() == NodeType.EXPRS) {
       return ((EvalExprNode)plan.getRootBlock().getRoot()).getExprs();
     } else {
-      return plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
+      return plan.getRootBlock().getTargetListManager().getUnresolvedTargets();
     }
   }
 
@@ -187,7 +187,7 @@ public class TestEvalTreeUtil {
   public final void testGetContainExprs() throws CloneNotSupportedException, PlanningException {
     Expr expr = analyzer.parse(QUERIES[1]);
     LogicalPlan plan = planner.createPlan(expr);
-    Target [] targets = plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
+    Target [] targets = plan.getRootBlock().getTargetListManager().getUnresolvedTargets();
     Column col1 = new Column("people.score", TajoDataTypes.Type.INT4);
     Collection<EvalNode> exprs =
         EvalTreeUtil.getContainExpr(targets[0].getEvalTree(), col1);
@@ -262,7 +262,7 @@ public class TestEvalTreeUtil {
 
     Expr expr = analyzer.parse(QUERIES[1]);
     LogicalPlan plan = planner.createPlan(expr);
-    targets = plan.getRootBlock().getTargetListManager().getUnEvaluatedTargets();
+    targets = plan.getRootBlock().getTargetListManager().getUnresolvedTargets();
     Column col1 = new Column("people.score", TajoDataTypes.Type.INT4);
     Collection<EvalNode> exprs =
         EvalTreeUtil.getContainExpr(targets[0].getEvalTree(), col1);
@@ -308,11 +308,11 @@ public class TestEvalTreeUtil {
   public final void testFindDistinctAggFunctions() {
     String query = "select sum(score) + max(age) from people";
     Target [] targets = getRawTargets(query);
-    List<AggFuncCallEval> list = EvalTreeUtil.
+    List<AggregationFunctionCallEval> list = EvalTreeUtil.
         findDistinctAggFunction(targets[0].getEvalTree());
     assertEquals(2, list.size());
     Set<String> result = Sets.newHashSet("max", "sum");
-    for (AggFuncCallEval eval : list) {
+    for (AggregationFunctionCallEval eval : list) {
       assertTrue(result.contains(eval.getName()));
     }
   }

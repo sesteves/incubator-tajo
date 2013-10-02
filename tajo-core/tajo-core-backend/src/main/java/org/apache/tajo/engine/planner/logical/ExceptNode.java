@@ -21,16 +21,23 @@
  */
 package org.apache.tajo.engine.planner.logical;
 
+import org.apache.tajo.engine.planner.PlanString;
+
 public class ExceptNode extends BinaryNode {
 
-  public ExceptNode() {
-    super(NodeType.EXCEPT);
-  }
-
-  public ExceptNode(LogicalNode outer, LogicalNode inner) {
-    this();
+  public ExceptNode(int pid, LogicalNode outer, LogicalNode inner) {
+    super(pid, NodeType.EXCEPT);
     setLeftChild(outer);
     setRightChild(inner);
+  }
+
+  @Override
+  public PlanString getPlanString() {
+    PlanString planStr = new PlanString("Except");
+    planStr.appendTitle(" (L - " + ((TableSubQueryNode)getLeftChild()).getTableName());
+    planStr.appendTitle(", R - " + ((TableSubQueryNode)getRightChild()).getTableName());
+    planStr.appendTitle(")");
+    return planStr;
   }
 
   public String toString() {

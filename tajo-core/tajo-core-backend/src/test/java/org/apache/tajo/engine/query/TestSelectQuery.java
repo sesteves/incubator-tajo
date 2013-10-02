@@ -147,7 +147,7 @@ public class TestSelectQuery {
       assertEquals("1996-04-20",res.getString(13));
       assertEquals("TAKE BACK RETURN",res.getString(14));
       assertEquals("MAIL",res.getString(15));
-      assertEquals("ly final dependencies: slyly bold",res.getString(16));
+      assertEquals("ly final dependencies: slyly bold ",res.getString(16));
     } finally {
       res.close();
     }
@@ -272,22 +272,22 @@ public class TestSelectQuery {
   @Test
   public final void testCaseWhenWithoutElse() throws Exception {
     ResultSet res = tpch.execute("select r_regionkey, " +
-        "case when r_regionkey = 1 then 'one' " +
-        "when r_regionkey = 2 then 'two' " +
-        "when r_regionkey = 3 then 'three' " +
-        "when r_regionkey = 4 then 'four' " +
+        "case when r_regionkey = 1 then 10 + r_regionkey  " +
+        "when r_regionkey = 2 then 10 + r_regionkey " +
+        "when r_regionkey = 3 then 10 + r_regionkey " +
+        "when r_regionkey = 4 then 10 + r_regionkey " +
         "end as cond from region");
 
     try {
-      Map<Integer, String> result = Maps.newHashMap();
-      result.put(0, "null");
-      result.put(1, "one");
-      result.put(2, "two");
-      result.put(3, "three");
-      result.put(4, "four");
+      Map<Integer, Integer> result = Maps.newHashMap();
+      result.put(0, 0);
+      result.put(1, 11);
+      result.put(2, 12);
+      result.put(3, 13);
+      result.put(4, 14);
       int cnt = 0;
       while(res.next()) {
-        assertEquals(result.get(res.getInt(1)), res.getString(2));
+        assertTrue(result.get(res.getInt(1)) == res.getInt(2));
         cnt++;
       }
 
@@ -400,9 +400,11 @@ public class TestSelectQuery {
       for (;res.next();) {
         count++;
       }
+      assertEquals(10, count);
     } finally {
       res.close();
     }
+
   }
 
   @Test
@@ -417,8 +419,7 @@ public class TestSelectQuery {
     assertEquals(5, orderKeys.getMeta().getStat().getNumRows().intValue());
   }
 
-  //@Test
-  // TODO - fix and enable this unit test
+  @Test
   public final void testLimit() throws Exception {
     ResultSet res = tpch.execute("select l_orderkey from lineitem limit 3");
     try {

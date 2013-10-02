@@ -31,15 +31,42 @@ import org.apache.tajo.exception.InternalException;
 import java.util.*;
 
 public class EvalTreeUtil {
-  public static void changeColumnRef(EvalNode node, Column oldName, 
-      Column newName) {
-    node.postOrder(new ChangeColumnRefVisitor(oldName.getQualifiedName(), 
-        newName.getQualifiedName()));
-  }
-  
-  public static void changeColumnRef(EvalNode node, String oldName, 
+  public static void changeColumnRef(EvalNode node, String oldName,
       String newName) {
     node.postOrder(new ChangeColumnRefVisitor(oldName, newName));
+  }
+
+  public static void replace(EvalNode expr, EvalNode targetExpr, EvalNode tobeReplaced) {
+    EvalReplaceVisitor replacer = new EvalReplaceVisitor(targetExpr, tobeReplaced);
+    replacer.visitChild(null, new Stack<EvalNode>(), expr);
+  }
+
+  public static class EvalReplaceVisitor extends BasicEvalNodeVisitor<EvalNode, EvalNode> {
+    private EvalNode target;
+    private EvalNode tobeReplaced;
+
+    public EvalReplaceVisitor(EvalNode target, EvalNode tobeReplaced) {
+      this.target = target;
+      this.tobeReplaced = tobeReplaced;
+    }
+
+    @Override
+    public EvalNode visitChild(EvalNode context, Stack<EvalNode> stack, EvalNode evalNode) {
+      super.visitChild(context, stack, evalNode);
+
+      if (evalNode.equals(target)) {
+        EvalNode parent = stack.peek();
+
+        if (parent.getLeftExpr().equals(evalNode)) {
+          parent.setLeftExpr(tobeReplaced);
+        }
+        if (parent.getRightExpr().equals(evalNode)) {
+          parent.setRightExpr(tobeReplaced);
+        }
+      }
+
+      return evalNode;
+    }
   }
   
   public static Set<Column> findDistinctRefColumns(EvalNode node) {
@@ -131,7 +158,7 @@ public class EvalTreeUtil {
 
     case FIELD:
       FieldEval fieldEval = (FieldEval) expr;
-      return SchemaUtil.newNoNameSchema(inputSchema.getColumn(fieldEval.getName()).getDataType());
+      return SchemaUtil.newNoNameSchema(inputSchema.getColumnByFQN(fieldEval.getName()).getDataType());
 
       
     default:
@@ -220,10 +247,6 @@ public class EvalTreeUtil {
         expr.getLeftExpr().getType() == EvalType.FIELD &&
         expr.getRightExpr().getType() == EvalType.FIELD;
   }
-
-  public static boolean isLogicalOperator(EvalNode expr) {
-    return expr.getType() == EvalType.AND || expr.getType() == EvalType.OR;
-  }
   
   public static class ChangeColumnRefVisitor implements EvalNodeVisitor {    
     private final String findColumn;
@@ -303,25 +326,25 @@ public class EvalTreeUtil {
     }
   }
 
-  public static List<AggFuncCallEval> findDistinctAggFunction(EvalNode expr) {
+  public static List<AggregationFunctionCallEval> findDistinctAggFunction(EvalNode expr) {
     AllAggFunctionFinder finder = new AllAggFunctionFinder();
     expr.postOrder(finder);
     return Lists.newArrayList(finder.getAggregationFunction());
   }
 
   public static class AllAggFunctionFinder implements EvalNodeVisitor {
-    private Set<AggFuncCallEval> aggFucntions = Sets.newHashSet();
-    private AggFuncCallEval field = null;
+    private Set<AggregationFunctionCallEval> aggFucntions = Sets.newHashSet();
+    private AggregationFunctionCallEval field = null;
 
     @Override
     public void visit(EvalNode node) {
       if (node.getType() == EvalType.AGG_FUNCTION) {
-        field = (AggFuncCallEval) node;
+        field = (AggregationFunctionCallEval) node;
         aggFucntions.add(field);
       }
     }
 
-    public Set<AggFuncCallEval> getAggregationFunction() {
+    public Set<AggregationFunctionCallEval> getAggregationFunction() {
       return this.aggFucntions;
     }
   }

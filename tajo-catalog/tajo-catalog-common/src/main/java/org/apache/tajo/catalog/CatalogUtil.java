@@ -35,13 +35,11 @@ import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import static org.apache.tajo.common.TajoDataTypes.Type;
 
 public class CatalogUtil {
-  public static String getCanonicalName(String signature,
-      Collection<DataType> paramTypes) {
+  public static String getCanonicalName(String signature, Collection<DataType> paramTypes) {
     DataType [] types = paramTypes.toArray(new DataType[paramTypes.size()]);
     return getCanonicalName(signature, types);
   }
-  public static String getCanonicalName(String signature,
-      DataType...paramTypes) {
+  public static String getCanonicalName(String signature, DataType...paramTypes) {
     StringBuilder sb = new StringBuilder(signature);
     sb.append("(");
     int i = 0;
@@ -50,7 +48,6 @@ public class CatalogUtil {
       if(i < paramTypes.length - 1) {
         sb.append(",");
       }
-      
       i++;
     }
     sb.append(")");
@@ -141,27 +138,14 @@ public class CatalogUtil {
   *
   * @return
   */
-  public static SchemaProto getQualfiedSchema(String tableName,
-      SchemaProto schema) {
+  public static SchemaProto getQualfiedSchema(String tableName, SchemaProto schema) {
     SchemaProto.Builder revisedSchema = SchemaProto.newBuilder(schema);
     revisedSchema.clearFields();
-    String[] split;
     for (ColumnProto col : schema.getFieldsList()) {
-      split = col.getColumnName().split("\\.");
-      if (split.length == 1) { // if not qualified name
-        // rewrite the column
-        ColumnProto.Builder builder = ColumnProto.newBuilder(col);
-        builder.setColumnName(tableName + "." + col.getColumnName());
-        col = builder.build();
-      } else if (split.length == 2) {
-        ColumnProto.Builder builder = ColumnProto.newBuilder(col);
-        builder.setColumnName(tableName + "." + split[1]);
-        col = builder.build();
-      } else {
-        throw new InternalError("Unaccetable field name "
-            + col.getColumnName());
-      }
-      revisedSchema.addFields(col);
+      ColumnProto.Builder builder = ColumnProto.newBuilder(col);
+      builder.setColumnName(col.getColumnName());
+      builder.setQualifier(tableName);
+      revisedSchema.addFields(builder.build());
     }
 
     return revisedSchema.build();

@@ -24,6 +24,7 @@ package org.apache.tajo.engine.planner.logical;
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.algebra.JoinType;
 import org.apache.tajo.engine.eval.EvalNode;
+import org.apache.tajo.engine.planner.PlanString;
 import org.apache.tajo.engine.planner.Target;
 
 public class JoinNode extends BinaryNode implements Projectable, Cloneable {
@@ -31,14 +32,14 @@ public class JoinNode extends BinaryNode implements Projectable, Cloneable {
   @Expose private EvalNode joinQual;
   @Expose private Target[] targets;
 
-  public JoinNode(JoinType joinType, LogicalNode left) {
-    super(NodeType.JOIN);
+  public JoinNode(int pid, JoinType joinType, LogicalNode left) {
+    super(pid, NodeType.JOIN);
     this.joinType = joinType;
     setLeftChild(left);
   }
 
-  public JoinNode(JoinType joinType, LogicalNode left, LogicalNode right) {
-    super(NodeType.JOIN);
+  public JoinNode(int pid, JoinType joinType, LogicalNode left, LogicalNode right) {
+    super(pid, NodeType.JOIN);
     this.joinType = joinType;
     setLeftChild(left);
     setRightChild(right);
@@ -80,11 +81,24 @@ public class JoinNode extends BinaryNode implements Projectable, Cloneable {
   }
 
   @Override
+  public PlanString getPlanString() {
+    PlanString planStr = new PlanString("Join (type : ")
+        .appendTitle(joinType +")");
+    if (hasJoinQual()) {
+      planStr.addExplan("Join Cond: " + joinQual.toString());
+    }
+
+    planStr.addDetail("in schema: " + getInSchema());
+    planStr.addDetail("out schema: " + getOutSchema());
+    return planStr;
+  }
+
+  @Override
   public boolean equals(Object obj) {
     if (obj instanceof JoinNode) {
       JoinNode other = (JoinNode) obj;
       return super.equals(other) && leftChild.equals(other.leftChild)
-          && inner.equals(other.inner);
+          && rightChild.equals(other.rightChild);
     } else {
       return false;
     }

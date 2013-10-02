@@ -22,10 +22,16 @@ import com.google.gson.annotations.Expose;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.exception.InvalidCastException;
 import org.apache.tajo.datum.exception.InvalidOperationException;
+import org.apache.tajo.util.NumberUtil;
 
 import java.nio.ByteBuffer;
 
-public class Int8Datum extends NumericDatum {
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+
+public class Int8Datum extends Datum implements NumericDatum {
   private static final int size = 8;
   @Expose private long val;
 
@@ -48,6 +54,11 @@ public class Int8Datum extends NumericDatum {
 	public boolean asBool() {
 		throw new InvalidCastException();
 	}
+
+  @Override
+  public char asChar() {
+    return asChars().charAt(0);
+  }
 	
 	@Override
 	public short asInt2() {
@@ -90,7 +101,12 @@ public class Int8Datum extends NumericDatum {
 	public String asChars() {
 		return ""+val;
 	}
-	
+
+  @Override
+  public byte[] asTextBytes() {
+    return NumberUtil.toAsciiBytes(val);
+  }
+
   @Override
   public int size() {
     return size;
@@ -124,56 +140,70 @@ public class Int8Datum extends NumericDatum {
         return DatumFactory.createBool(val == datum.asFloat4());
       case FLOAT8:
         return DatumFactory.createBool(val == datum.asFloat8());
+      case NULL:
+        return DatumFactory.createBool(false);
       default:
-        throw new InvalidOperationException(datum.type());
+        throw new InvalidOperationException();
     }
   }
 
   @Override
   public int compareTo(Datum datum) {
     switch (datum.type()) {
-      case INT2:
-        if (val < datum.asInt2()) {
+      case INT2: {
+        short another = datum.asInt2();
+        if (val < another) {
           return -1;
-        } else if (datum.asInt2() < val) {
+        } else if (val > another) {
           return 1;
         } else {
           return 0;
         }
-      case INT4:
-        if (val < datum.asInt4()) {
+      }
+      case INT4: {
+        int another = datum.asInt4();
+        if (val < another) {
           return -1;
-        } else if (datum.asInt4() < val) {
+        } else if (val > another) {
           return 1;
         } else {
           return 0;
         }
-      case INT8:
-        if (val < datum.asInt8()) {
+      }
+      case INT8: {
+        long another = datum.asInt8();
+        if (val < another) {
           return -1;
-        } else if (datum.asInt8() < val) {
+        } else if (val > another) {
           return 1;
         } else {
           return 0;
         }
-      case FLOAT4:
-        if (val < datum.asFloat4()) {
+      }
+      case FLOAT4: {
+        float another = datum.asFloat4();
+        if (val < another) {
           return -1;
-        } else if (datum.asFloat4() < val) {
+        } else if (val > another) {
           return 1;
         } else {
           return 0;
         }
-      case FLOAT8:
-        if (val < datum.asFloat8()) {
+      }
+      case FLOAT8:{
+        double another = datum.asFloat8();
+        if (val < another) {
           return -1;
-        } else if (datum.asFloat8() < val) {
+        } else if (val > another) {
           return 1;
         } else {
           return 0;
         }
+      }
+      case NULL:
+        return -1;
       default:
-        throw new InvalidOperationException(datum.type());
+        throw new InvalidOperationException();
     }
   }
 
@@ -190,6 +220,8 @@ public class Int8Datum extends NumericDatum {
       return DatumFactory.createFloat8(val + datum.asFloat4());
     case FLOAT8:
       return DatumFactory.createFloat8(val + datum.asFloat8());
+    case NULL:
+      return datum;
     default:
       throw new InvalidOperationException(datum.type());
     }
@@ -208,6 +240,8 @@ public class Int8Datum extends NumericDatum {
       return DatumFactory.createFloat8(val - datum.asFloat4());
     case FLOAT8:
       return DatumFactory.createFloat8(val - datum.asFloat8());
+    case NULL:
+      return datum;
     default:
       throw new InvalidOperationException(datum.type());
     }
@@ -226,6 +260,8 @@ public class Int8Datum extends NumericDatum {
       return DatumFactory.createFloat8(val * datum.asFloat4());
     case FLOAT8:
       return DatumFactory.createFloat8(val * datum.asFloat8());
+    case NULL:
+      return datum;
     default:
       throw new InvalidOperationException(datum.type());
     }
@@ -244,6 +280,8 @@ public class Int8Datum extends NumericDatum {
       return DatumFactory.createFloat8(val / datum.asFloat4());
     case FLOAT8:
       return DatumFactory.createFloat8(val / datum.asFloat8());
+    case NULL:
+      return datum;
     default:
       throw new InvalidOperationException(datum.type());
     }
@@ -262,6 +300,8 @@ public class Int8Datum extends NumericDatum {
         return DatumFactory.createFloat8(val % datum.asFloat4());
       case FLOAT8:
         return DatumFactory.createFloat8(val % datum.asFloat8());
+      case NULL:
+        return datum;
       default:
         throw new InvalidOperationException(datum.type());
     }

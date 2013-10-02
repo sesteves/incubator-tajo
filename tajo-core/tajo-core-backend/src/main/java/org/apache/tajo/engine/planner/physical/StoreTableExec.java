@@ -21,8 +21,6 @@
  */
 package org.apache.tajo.engine.planner.physical;
 
-import java.io.IOException;
-
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
@@ -30,10 +28,9 @@ import org.apache.tajo.TaskAttemptContext;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.engine.planner.logical.StoreTableNode;
-import org.apache.tajo.storage.Appender;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.StorageUtil;
-import org.apache.tajo.storage.Tuple;
+import org.apache.tajo.storage.*;
+
+import java.io.IOException;
 
 /**
  * This physical operator stores a relation into a table.
@@ -42,15 +39,13 @@ public class StoreTableExec extends UnaryPhysicalExec {
   private final StoreTableNode plan;
   private Appender appender;
   private Tuple tuple;
-
+  
   /**
    * @throws java.io.IOException
-   * 
+   *
    */
-  public StoreTableExec(TaskAttemptContext context, StorageManager sm, StoreTableNode plan, PhysicalExec child)
-      throws IOException {
+  public StoreTableExec(TaskAttemptContext context, StoreTableNode plan, PhysicalExec child) throws IOException {
     super(context, plan.getInSchema(), plan.getOutSchema(), child);
-
     this.plan = plan;
   }
 
@@ -68,26 +63,25 @@ public class StoreTableExec extends UnaryPhysicalExec {
       Path storeTablePath = new Path(context.getWorkDir(), "out");
       FileSystem fs = new RawLocalFileSystem();
       fs.mkdirs(storeTablePath);
-      appender = StorageManager.getAppender(context.getConf(), meta, StorageUtil.concatPath(storeTablePath, "0"));
+      appender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(meta,
+          StorageUtil.concatPath(storeTablePath, "0"));
     } else {
-      appender = StorageManager.getAppender(context.getConf(), meta, context.getOutputPath());
+      appender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(meta, context.getOutputPath());
     }
     appender.enableStats();
     appender.setJoinKeys(context.getJoinKeys());
     appender.init();
   }
 
-  /*
-   * (non-Javadoc)
-   * 
+  /* (non-Javadoc)
    * @see PhysicalExec#next()
    */
   @Override
   public Tuple next() throws IOException {
-    while ((tuple = child.next()) != null) {
+    while((tuple = child.next()) != null) {
       appender.addTuple(tuple);
     }
-
+        
     return null;
   }
 
@@ -103,7 +97,7 @@ public class StoreTableExec extends UnaryPhysicalExec {
     appender.close();
 
     // Collect statistics data
-    // ctx.addStatSet(annotation.getType().toString(), appender.getStats());
+//    ctx.addStatSet(annotation.getType().toString(), appender.getStats());
     context.setResultStats(appender.getStats());
     context.addRepartition(0, context.getTaskId().toString());
   }

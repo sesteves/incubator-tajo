@@ -21,8 +21,6 @@ package org.apache.tajo.storage.index;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.junit.Before;
-import org.junit.Test;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.Type;
@@ -34,12 +32,14 @@ import org.apache.tajo.storage.index.bst.BSTIndex;
 import org.apache.tajo.storage.index.bst.BSTIndex.BSTIndexReader;
 import org.apache.tajo.storage.index.bst.BSTIndex.BSTIndexWriter;
 import org.apache.tajo.util.CommonTestingUtil;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.IOException;
 
+import static org.apache.tajo.storage.CSVFile.CSVScanner;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.apache.tajo.storage.CSVFile.CSVScanner;
 
 public class TestSingleCSVFileBSTIndex {
   
@@ -77,7 +77,7 @@ public class TestSingleCSVFileBSTIndex {
     Path tablePath = StorageUtil.concatPath(testDir, "testFindValueInSingleCSV", "table.csv");
     fs.mkdirs(tablePath.getParent());
 
-    Appender appender = StorageManager.getAppender(conf, meta, tablePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(meta, tablePath);
     appender.init();
     Tuple tuple;
     for (int i = 0; i < TUPLE_NUM; i++) {
@@ -96,8 +96,8 @@ public class TestSingleCSVFileBSTIndex {
     Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
 
     SortSpec[] sortKeys = new SortSpec[2];
-    sortKeys[0] = new SortSpec(schema.getColumn("long"), true, false);
-    sortKeys[1] = new SortSpec(schema.getColumn("double"), true, false);
+    sortKeys[0] = new SortSpec(schema.getColumnByFQN("long"), true, false);
+    sortKeys[1] = new SortSpec(schema.getColumnByFQN("double"), true, false);
 
     Schema keySchema = new Schema();
     keySchema.addColumn(new Column("long", Type.INT8));
@@ -166,7 +166,7 @@ public class TestSingleCSVFileBSTIndex {
     Path tablePath = StorageUtil.concatPath(testDir, "testFindNextKeyValueInSingleCSV",
         "table1.csv");
     fs.mkdirs(tablePath.getParent());
-    Appender appender = StorageManager.getAppender(conf, meta, tablePath);
+    Appender appender = StorageManagerFactory.getStorageManager(conf).getAppender(meta, tablePath);
     appender.init();
     Tuple tuple;
     for(int i = 0 ; i < TUPLE_NUM; i ++ ) {
@@ -185,8 +185,8 @@ public class TestSingleCSVFileBSTIndex {
     Fragment tablet = new Fragment("table1_1", status.getPath(), meta, 0, fileLen);
     
     SortSpec [] sortKeys = new SortSpec[2];
-    sortKeys[0] = new SortSpec(schema.getColumn("int"), true, false);
-    sortKeys[1] = new SortSpec(schema.getColumn("long"), true, false);
+    sortKeys[0] = new SortSpec(schema.getColumnByFQN("int"), true, false);
+    sortKeys[1] = new SortSpec(schema.getColumnByFQN("long"), true, false);
 
     Schema keySchema = new Schema();
     keySchema.addColumn(new Column("int", Type.INT4));

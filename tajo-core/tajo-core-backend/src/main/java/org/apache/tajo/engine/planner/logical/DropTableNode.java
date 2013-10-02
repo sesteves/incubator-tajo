@@ -18,16 +18,23 @@
 
 package org.apache.tajo.engine.planner.logical;
 
+import org.apache.tajo.engine.planner.PlanString;
+
 public class DropTableNode extends LogicalNode {
   private String tableName;
 
-  public DropTableNode(String tableName) {
-    super(NodeType.DROP_TABLE);
+  public DropTableNode(int pid, String tableName) {
+    super(pid, NodeType.DROP_TABLE);
     this.tableName = tableName;
   }
 
   public String getTableName() {
     return this.tableName;
+  }
+
+  @Override
+  public PlanString getPlanString() {
+    return new PlanString("DropTable");
   }
 
   public boolean equals(Object obj) {
