@@ -14,21 +14,37 @@
 
 package org.apache.tajo.master;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.engine.planner.PlannerUtil;
 import org.apache.tajo.engine.planner.enforce.Enforcer;
-import org.apache.tajo.engine.planner.logical.*;
-
-import java.util.*;
-
-import static org.apache.tajo.ipc.TajoWorkerProtocol.PartitionType;
+import org.apache.tajo.engine.planner.logical.BinaryNode;
+import org.apache.tajo.engine.planner.logical.JoinNode;
+import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
+import org.apache.tajo.engine.planner.logical.ScanNode;
+import org.apache.tajo.engine.planner.logical.StoreTableNode;
+import org.apache.tajo.engine.planner.logical.TableSubQueryNode;
+import org.apache.tajo.engine.planner.logical.UnaryNode;
+import org.apache.tajo.ipc.TajoWorkerProtocol.PartitionType;
 
 /**
- * A distributed execution plan (DEP) is a direct acyclic graph (DAG) of ExecutionBlocks.
- * An ExecutionBlock is a basic execution unit that could be distributed across a number of nodes.
- * An ExecutionBlock class contains input information (e.g., child execution blocks or input
- * tables), and output information (e.g., partition type, partition key, and partition number).
- * In addition, it includes a logical plan to be executed in each node.
+ * A distributed execution plan (DEP) is a direct acyclic graph (DAG) of
+ * ExecutionBlocks. An ExecutionBlock is a basic execution unit that could be
+ * distributed across a number of nodes. An ExecutionBlock class contains input
+ * information (e.g., child execution blocks or input tables), and output
+ * information (e.g., partition type, partition key, and partition number). In
+ * addition, it includes a logical plan to be executed in each node.
  */
 public class ExecutionBlock {
   private ExecutionBlockId executionBlockId;
@@ -70,7 +86,7 @@ public class ExecutionBlock {
     ArrayList<LogicalNode> s = new ArrayList<LogicalNode>();
     s.add(node);
     while (!s.isEmpty()) {
-      node = s.remove(s.size()-1);
+      node = s.remove(s.size() - 1);
       if (node instanceof UnaryNode) {
         UnaryNode unary = (UnaryNode) node;
         s.add(s.size(), unary.getChild());
@@ -89,14 +105,13 @@ public class ExecutionBlock {
         s.add(s.size(), binary.getLeftChild());
         s.add(s.size(), binary.getRightChild());
       } else if (node instanceof ScanNode) {
-        scanlist.add((ScanNode)node);
+        scanlist.add((ScanNode) node);
       } else if (node instanceof TableSubQueryNode) {
         TableSubQueryNode subQuery = (TableSubQueryNode) node;
         s.add(s.size(), subQuery.getSubQuery());
       }
     }
   }
-
 
   public LogicalNode getPlan() {
     return plan;
@@ -130,7 +145,7 @@ public class ExecutionBlock {
     return store;
   }
 
-  public ScanNode [] getScanNodes() {
+  public ScanNode[] getScanNodes() {
     return this.scanlist.toArray(new ScanNode[scanlist.size()]);
   }
 

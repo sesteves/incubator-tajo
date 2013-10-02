@@ -44,7 +44,7 @@ import org.apache.tajo.engine.utils.SchemaUtil;
 import org.apache.tajo.storage.Appender;
 import org.apache.tajo.storage.FrameTuple;
 import org.apache.tajo.storage.Scanner;
-import org.apache.tajo.storage.StorageManager;
+import org.apache.tajo.storage.StorageManagerFactory;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.VTuple;
 
@@ -171,7 +171,8 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
 
           Path outerPath = new Path(context.getWorkDir(), "outerBucket" + bucketId);
           Appender outerAppender = null;
-          outerAppender = StorageManager.getAppender(context.getConf(), outerTableMeta, outerPath);
+          outerAppender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(outerTableMeta,
+              outerPath);
           outerAppender.init();
 
           long i = value / workingMemory;
@@ -432,36 +433,39 @@ public class HybridHashJoinExec extends BinaryPhysicalExec {
       this.bucketZero = bucketZero;
       try {
         innerPath = new Path(context.getWorkDir(), "innerBucket" + bucketId);
-        this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, innerPath);
+        this.innerAppender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(innerTableMeta,
+            innerPath);
         this.innerAppender.init();
 
         this.outerPath = new Path(context.getWorkDir(), "outerBucket" + bucketId++);
-        this.outerAppender = StorageManager.getAppender(context.getConf(), outerTableMeta, outerPath);
+        this.outerAppender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(outerTableMeta,
+            outerPath);
         this.outerAppender.init();
       } catch (IOException e) {
-        e.printStackTrace();
+        LOG.error(e);
       }
     }
 
     public Bucket(Path outerPath, Appender outerAppender) {
       try {
         innerPath = new Path(context.getWorkDir(), "innerBucket" + bucketId++);
-        this.innerAppender = StorageManager.getAppender(context.getConf(), innerTableMeta, innerPath);
+        this.innerAppender = StorageManagerFactory.getStorageManager(context.getConf()).getAppender(innerTableMeta,
+            innerPath);
         this.innerAppender.init();
 
         this.outerPath = outerPath;
         this.outerAppender = outerAppender;
       } catch (IOException e) {
-        e.printStackTrace();
+        LOG.error(e);
       }
     }
 
     public void closeAppendersAndOpenScanners() throws IOException {
       innerAppender.close();
       outerAppender.close();
-      innerScanner = StorageManager.getScanner(context.getConf(), innerTableMeta, innerPath);
+      innerScanner = StorageManagerFactory.getStorageManager(context.getConf()).getScanner(innerTableMeta, innerPath);
       innerScanner.init();
-      outerScanner = StorageManager.getScanner(context.getConf(), outerTableMeta, outerPath);
+      outerScanner = StorageManagerFactory.getStorageManager(context.getConf()).getScanner(outerTableMeta, outerPath);
       outerScanner.init();
     }
 
