@@ -21,8 +21,9 @@
  */
 package org.apache.tajo.engine.planner;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ObjectArrays;
+import java.io.IOException;
+import java.util.List;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
@@ -33,22 +34,65 @@ import org.apache.tajo.catalog.SortSpec;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.enforce.Enforcer;
-import org.apache.tajo.engine.planner.logical.*;
-import org.apache.tajo.engine.planner.physical.*;
+import org.apache.tajo.engine.planner.logical.EvalExprNode;
+import org.apache.tajo.engine.planner.logical.GroupbyNode;
+import org.apache.tajo.engine.planner.logical.IndexScanNode;
+import org.apache.tajo.engine.planner.logical.JoinNode;
+import org.apache.tajo.engine.planner.logical.LimitNode;
+import org.apache.tajo.engine.planner.logical.LogicalNode;
+import org.apache.tajo.engine.planner.logical.LogicalRootNode;
+import org.apache.tajo.engine.planner.logical.NodeType;
+import org.apache.tajo.engine.planner.logical.ProjectionNode;
+import org.apache.tajo.engine.planner.logical.ScanNode;
+import org.apache.tajo.engine.planner.logical.SelectionNode;
+import org.apache.tajo.engine.planner.logical.SortNode;
+import org.apache.tajo.engine.planner.logical.StoreIndexNode;
+import org.apache.tajo.engine.planner.logical.StoreTableNode;
+import org.apache.tajo.engine.planner.logical.TableSubQueryNode;
+import org.apache.tajo.engine.planner.logical.UnionNode;
+import org.apache.tajo.engine.planner.physical.BNLJoinExec;
+import org.apache.tajo.engine.planner.physical.BSTIndexScanExec;
+import org.apache.tajo.engine.planner.physical.EvalExprExec;
+import org.apache.tajo.engine.planner.physical.ExternalSortExec;
+import org.apache.tajo.engine.planner.physical.FullOuterHashJoinExec;
+import org.apache.tajo.engine.planner.physical.FullOuterMergeJoinExec;
+import org.apache.tajo.engine.planner.physical.HashAggregateExec;
+import org.apache.tajo.engine.planner.physical.HashJoinExec;
+import org.apache.tajo.engine.planner.physical.HybridHashJoinExec;
+import org.apache.tajo.engine.planner.physical.IndexedStoreExec;
+import org.apache.tajo.engine.planner.physical.LeftOuterHashJoinExec;
+import org.apache.tajo.engine.planner.physical.LeftOuterNLJoinExec;
+import org.apache.tajo.engine.planner.physical.LimitExec;
+import org.apache.tajo.engine.planner.physical.MemSortExec;
+import org.apache.tajo.engine.planner.physical.MergeJoinExec;
+import org.apache.tajo.engine.planner.physical.NLJoinExec;
+import org.apache.tajo.engine.planner.physical.PartitionedStoreExec;
+import org.apache.tajo.engine.planner.physical.PhysicalExec;
+import org.apache.tajo.engine.planner.physical.PhysicalPlanUtil;
+import org.apache.tajo.engine.planner.physical.ProjectionExec;
+import org.apache.tajo.engine.planner.physical.RightOuterMergeJoinExec;
+import org.apache.tajo.engine.planner.physical.SelectionExec;
+import org.apache.tajo.engine.planner.physical.SeqScanExec;
+import org.apache.tajo.engine.planner.physical.SortAggregateExec;
+import org.apache.tajo.engine.planner.physical.SortExec;
+import org.apache.tajo.engine.planner.physical.StoreTableExec;
+import org.apache.tajo.engine.planner.physical.TunnelExec;
+import org.apache.tajo.engine.planner.physical.UnionExec;
 import org.apache.tajo.exception.InternalException;
+import org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty;
+import org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty.EnforceType;
+import org.apache.tajo.ipc.TajoWorkerProtocol.GroupbyEnforce.GroupbyAlgorithm;
+import org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
+import org.apache.tajo.ipc.TajoWorkerProtocol.PartitionType;
+import org.apache.tajo.ipc.TajoWorkerProtocol.SortEnforce;
 import org.apache.tajo.storage.AbstractStorageManager;
 import org.apache.tajo.storage.Fragment;
 import org.apache.tajo.storage.TupleComparator;
 import org.apache.tajo.util.IndexUtil;
 import org.apache.tajo.util.TUtil;
 
-import java.io.IOException;
-import java.util.List;
-
-import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty.EnforceType;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.GroupbyEnforce.GroupbyAlgorithm;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ObjectArrays;
 
 public class PhysicalPlannerImpl implements PhysicalPlanner {
   private static final Log LOG = LogFactory.getLog(PhysicalPlannerImpl.class);
@@ -58,7 +102,6 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
   protected final AbstractStorageManager sm;
 
   final long threshold = 1048576 * 128; // 64MB
-
 
   public PhysicalPlannerImpl(final TajoConf conf, final AbstractStorageManager sm) {
     this.conf = conf;
@@ -72,8 +115,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
     try {
       execPlan = createPlanRecursive(context, logicalPlan);
-      if (execPlan instanceof StoreTableExec
-          || execPlan instanceof IndexedStoreExec
+      if (execPlan instanceof StoreTableExec || execPlan instanceof IndexedStoreExec
           || execPlan instanceof PartitionedStoreExec) {
         return execPlan;
       } else if (context.getDataChannel() != null) {
@@ -86,8 +128,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     }
   }
 
-  private PhysicalExec buildOutputOperator(TaskAttemptContext context, LogicalNode plan,
-                                           PhysicalExec execPlan) throws IOException {
+  private PhysicalExec buildOutputOperator(TaskAttemptContext context, LogicalNode plan, PhysicalExec execPlan)
+      throws IOException {
     DataChannel channel = context.getDataChannel();
     StoreTableNode storeTableNode = new StoreTableNode(UNGENERATED_PID, channel.getTargetId().toString());
     storeTableNode.setStorageType(CatalogProtos.StoreType.CSV);
@@ -110,77 +152,77 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
     switch (logicalNode.getType()) {
 
-      case ROOT:
-        LogicalRootNode rootNode = (LogicalRootNode) logicalNode;
-        return createPlanRecursive(ctx, rootNode.getChild());
+    case ROOT:
+      LogicalRootNode rootNode = (LogicalRootNode) logicalNode;
+      return createPlanRecursive(ctx, rootNode.getChild());
 
-      case EXPRS:
-        EvalExprNode evalExpr = (EvalExprNode) logicalNode;
-        return new EvalExprExec(ctx, evalExpr);
+    case EXPRS:
+      EvalExprNode evalExpr = (EvalExprNode) logicalNode;
+      return new EvalExprExec(ctx, evalExpr);
 
-      case STORE:
-        StoreTableNode storeNode = (StoreTableNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, storeNode.getChild());
-        return createStorePlan(ctx, storeNode, leftExec);
+    case STORE:
+      StoreTableNode storeNode = (StoreTableNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, storeNode.getChild());
+      return createStorePlan(ctx, storeNode, leftExec);
 
-      case SELECTION:
-        SelectionNode selNode = (SelectionNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, selNode.getChild());
-        return new SelectionExec(ctx, selNode, leftExec);
+    case SELECTION:
+      SelectionNode selNode = (SelectionNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, selNode.getChild());
+      return new SelectionExec(ctx, selNode, leftExec);
 
-      case PROJECTION:
-        ProjectionNode prjNode = (ProjectionNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, prjNode.getChild());
-        return new ProjectionExec(ctx, prjNode, leftExec);
+    case PROJECTION:
+      ProjectionNode prjNode = (ProjectionNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, prjNode.getChild());
+      return new ProjectionExec(ctx, prjNode, leftExec);
 
-      case TABLE_SUBQUERY: {
-        TableSubQueryNode subQueryNode = (TableSubQueryNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, subQueryNode.getSubQuery());
-        return leftExec;
+    case TABLE_SUBQUERY: {
+      TableSubQueryNode subQueryNode = (TableSubQueryNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, subQueryNode.getSubQuery());
+      return leftExec;
 
-      } case SCAN:
-        leftExec = createScanPlan(ctx, (ScanNode) logicalNode);
-        return leftExec;
+    }
+    case SCAN:
+      leftExec = createScanPlan(ctx, (ScanNode) logicalNode);
+      return leftExec;
 
-      case GROUP_BY:
-        GroupbyNode grpNode = (GroupbyNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, grpNode.getChild());
-        return createGroupByPlan(ctx, grpNode, leftExec);
+    case GROUP_BY:
+      GroupbyNode grpNode = (GroupbyNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, grpNode.getChild());
+      return createGroupByPlan(ctx, grpNode, leftExec);
 
-      case SORT:
-        SortNode sortNode = (SortNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, sortNode.getChild());
-        return createSortPlan(ctx, sortNode, leftExec);
+    case SORT:
+      SortNode sortNode = (SortNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, sortNode.getChild());
+      return createSortPlan(ctx, sortNode, leftExec);
 
-      case JOIN:
-        JoinNode joinNode = (JoinNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, joinNode.getLeftChild());
-        rightExec = createPlanRecursive(ctx, joinNode.getRightChild());
-        return createJoinPlan(ctx, joinNode, leftExec, rightExec);
+    case JOIN:
+      JoinNode joinNode = (JoinNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, joinNode.getLeftChild());
+      rightExec = createPlanRecursive(ctx, joinNode.getRightChild());
+      return createJoinPlan(ctx, joinNode, leftExec, rightExec);
 
-      case UNION:
-        UnionNode unionNode = (UnionNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, unionNode.getLeftChild());
-        rightExec = createPlanRecursive(ctx, unionNode.getRightChild());
-        return new UnionExec(ctx, leftExec, rightExec);
+    case UNION:
+      UnionNode unionNode = (UnionNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, unionNode.getLeftChild());
+      rightExec = createPlanRecursive(ctx, unionNode.getRightChild());
+      return new UnionExec(ctx, leftExec, rightExec);
 
-      case LIMIT:
-        LimitNode limitNode = (LimitNode) logicalNode;
-        leftExec = createPlanRecursive(ctx, limitNode.getChild());
-        return new LimitExec(ctx, limitNode.getInSchema(),
-            limitNode.getOutSchema(), leftExec, limitNode);
+    case LIMIT:
+      LimitNode limitNode = (LimitNode) logicalNode;
+      leftExec = createPlanRecursive(ctx, limitNode.getChild());
+      return new LimitExec(ctx, limitNode.getInSchema(), limitNode.getOutSchema(), leftExec, limitNode);
 
-      case BST_INDEX_SCAN:
-        IndexScanNode indexScanNode = (IndexScanNode) logicalNode;
-        leftExec = createIndexScanExec(ctx, indexScanNode);
-        return leftExec;
+    case BST_INDEX_SCAN:
+      IndexScanNode indexScanNode = (IndexScanNode) logicalNode;
+      leftExec = createIndexScanExec(ctx, indexScanNode);
+      return leftExec;
 
-      default:
-        return null;
+    default:
+      return null;
     }
   }
 
-  private long estimateSizeRecursive(TaskAttemptContext ctx, String [] tableIds) {
+  private long estimateSizeRecursive(TaskAttemptContext ctx, String[] tableIds) {
     long size = 0;
     for (String tableId : tableIds) {
       Fragment[] fragments = ctx.getTables(tableId);
@@ -192,142 +234,145 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
   }
 
   public PhysicalExec createJoinPlan(TaskAttemptContext context, JoinNode joinNode, PhysicalExec leftExec,
-                                     PhysicalExec rightExec) throws IOException {
+      PhysicalExec rightExec) throws IOException {
 
     switch (joinNode.getJoinType()) {
-      case CROSS:
-        return createCrossJoinPlan(context, joinNode, leftExec, rightExec);
+    case CROSS:
+      return createCrossJoinPlan(context, joinNode, leftExec, rightExec);
 
-      case INNER:
-        return createInnerJoinPlan(context, joinNode, leftExec, rightExec);
+    case INNER:
+      return createInnerJoinPlan(context, joinNode, leftExec, rightExec);
 
-      case LEFT_OUTER:
-        return createLeftOuterJoinPlan(context, joinNode, leftExec, rightExec);
+    case LEFT_OUTER:
+      return createLeftOuterJoinPlan(context, joinNode, leftExec, rightExec);
 
-      case RIGHT_OUTER:
-        return createRightOuterJoinPlan(context, joinNode, leftExec, rightExec);
+    case RIGHT_OUTER:
+      return createRightOuterJoinPlan(context, joinNode, leftExec, rightExec);
 
-      case FULL_OUTER:
-        return createFullOuterJoinPlan(context, joinNode, leftExec, rightExec);
+    case FULL_OUTER:
+      return createFullOuterJoinPlan(context, joinNode, leftExec, rightExec);
 
-      case LEFT_SEMI:
-      case RIGHT_SEMI:
+    case LEFT_SEMI:
+    case RIGHT_SEMI:
 
-      case LEFT_ANTI:
-      case RIGHT_ANTI:
+    case LEFT_ANTI:
+    case RIGHT_ANTI:
 
-      default:
-        throw new PhysicalPlanningException("Cannot support join type: " + joinNode.getJoinType().name());
+    default:
+      throw new PhysicalPlanningException("Cannot support join type: " + joinNode.getJoinType().name());
     }
   }
 
-  private PhysicalExec createLeftOuterJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                           PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+  private PhysicalExec createLeftOuterJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, plan);
     if (property != null) {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
       switch (algorithm) {
-        case IN_MEMORY_HASH_JOIN:
-          LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Hash Join].");
-          return new LeftOuterHashJoinExec(context, plan, leftExec, rightExec);
-        case NESTED_LOOP_JOIN:
-          //the right operand is too large, so we opt for NL implementation of left outer join
-          LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Nested Loop Join].");
-          return new LeftOuterNLJoinExec(context, plan, leftExec, rightExec);
-        default:
-          LOG.error("Invalid Left Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback inner join algorithm: " + JoinAlgorithm.IN_MEMORY_HASH_JOIN.name());
-          return new LeftOuterHashJoinExec(context, plan, leftExec, rightExec);
+      case IN_MEMORY_HASH_JOIN:
+        LOG.info("Left Outer Join (" + plan.getPID() + ") chooses [Hash Join].");
+        return new LeftOuterHashJoinExec(context, plan, leftExec, rightExec);
+      case NESTED_LOOP_JOIN:
+        // the right operand is too large, so we opt for NL implementation of
+        // left outer join
+        LOG.info("Left Outer Join (" + plan.getPID() + ") chooses [Nested Loop Join].");
+        return new LeftOuterNLJoinExec(context, plan, leftExec, rightExec);
+      default:
+        LOG.error("Invalid Left Outer Join Algorithm Enforcer: " + algorithm.name());
+        LOG.error("Choose a fallback inner join algorithm: " + JoinAlgorithm.IN_MEMORY_HASH_JOIN.name());
+        return new LeftOuterHashJoinExec(context, plan, leftExec, rightExec);
       }
     } else {
       return createBestLeftOuterJoinPlan(context, plan, leftExec, rightExec);
     }
   }
 
-  private PhysicalExec createBestLeftOuterJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                                   PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    String [] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
+  private PhysicalExec createBestLeftOuterJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    String[] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
     long rightTableVolume = estimateSizeRecursive(context, rightLineage);
 
     if (rightTableVolume < threshold) {
-      // we can implement left outer join using hash join, using the right operand as the build relation
-      LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Hash Join].");
+      // we can implement left outer join using hash join, using the right
+      // operand as the build relation
+      LOG.info("Left Outer Join (" + plan.getPID() + ") chooses [Hash Join].");
       return new LeftOuterHashJoinExec(context, plan, leftExec, rightExec);
-    }
-    else {
-      //the right operand is too large, so we opt for NL implementation of left outer join
-      LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Nested Loop Join].");
+    } else {
+      // the right operand is too large, so we opt for NL implementation of left
+      // outer join
+      LOG.info("Left Outer Join (" + plan.getPID() + ") chooses [Nested Loop Join].");
       return new LeftOuterNLJoinExec(context, plan, leftExec, rightExec);
     }
   }
 
-  private PhysicalExec createBestRightJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                               PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    //if the left operand is small enough => implement it as a left outer hash join with exchanged operators (note:
+  private PhysicalExec createBestRightJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    // if the left operand is small enough => implement it as a left outer hash
+    // join with exchanged operators (note:
     // blocking, but merge join is blocking as well)
-    String [] outerLineage4 = PlannerUtil.getLineage(plan.getLeftChild());
+    String[] outerLineage4 = PlannerUtil.getLineage(plan.getLeftChild());
     long outerSize4 = estimateSizeRecursive(context, outerLineage4);
-    if (outerSize4 < threshold){
-      LOG.info("Right Outer Join (" + plan.getPID() +") chooses [Hash Join].");
+    if (outerSize4 < threshold) {
+      LOG.info("Right Outer Join (" + plan.getPID() + ") chooses [Hash Join].");
       return new LeftOuterHashJoinExec(context, plan, rightExec, leftExec);
     } else {
       return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
     }
   }
 
-  private PhysicalExec createRightOuterMergeJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                                     PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    //the left operand is too large, so opt for merge join implementation
-    LOG.info("Right Outer Join (" + plan.getPID() +") chooses [Merge Join].");
-    SortSpec[][] sortSpecs2 = PlannerUtil.getSortKeysFromJoinQual(
-        plan.getJoinQual(), leftExec.getSchema(), rightExec.getSchema());
-    ExternalSortExec outerSort2 = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID,sortSpecs2[0], leftExec.getSchema(), leftExec.getSchema()), leftExec);
-    ExternalSortExec innerSort2 = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID,sortSpecs2[1], rightExec.getSchema(), rightExec.getSchema()), rightExec);
+  private PhysicalExec createRightOuterMergeJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    // the left operand is too large, so opt for merge join implementation
+    LOG.info("Right Outer Join (" + plan.getPID() + ") chooses [Merge Join].");
+    SortSpec[][] sortSpecs2 = PlannerUtil.getSortKeysFromJoinQual(plan.getJoinQual(), leftExec.getSchema(),
+        rightExec.getSchema());
+    ExternalSortExec outerSort2 = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs2[0],
+        leftExec.getSchema(), leftExec.getSchema()), leftExec);
+    ExternalSortExec innerSort2 = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs2[1],
+        rightExec.getSchema(), rightExec.getSchema()), rightExec);
     return new RightOuterMergeJoinExec(context, plan, outerSort2, innerSort2, sortSpecs2[0], sortSpecs2[1]);
   }
 
-  private PhysicalExec createRightOuterJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                               PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+  private PhysicalExec createRightOuterJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, plan);
     if (property != null) {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
       switch (algorithm) {
-        case IN_MEMORY_HASH_JOIN:
-          LOG.info("Right Outer Join (" + plan.getPID() +") chooses [Hash Join].");
-          return new LeftOuterHashJoinExec(context, plan, rightExec, leftExec);
-        case MERGE_JOIN:
-          return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
-        default:
-          LOG.error("Invalid Right Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
-          return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
+      case IN_MEMORY_HASH_JOIN:
+        LOG.info("Right Outer Join (" + plan.getPID() + ") chooses [Hash Join].");
+        return new LeftOuterHashJoinExec(context, plan, rightExec, leftExec);
+      case MERGE_JOIN:
+        return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
+      default:
+        LOG.error("Invalid Right Outer Join Algorithm Enforcer: " + algorithm.name());
+        LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
+        return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
       }
     } else {
       return createBestRightJoinPlan(context, plan, leftExec, rightExec);
     }
   }
 
-  private PhysicalExec createFullOuterJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                              PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+  private PhysicalExec createFullOuterJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, plan);
     if (property != null) {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
       switch (algorithm) {
-        case IN_MEMORY_HASH_JOIN:
-          return createFullOuterHashJoinPlan(context, plan, leftExec, rightExec);
+      case IN_MEMORY_HASH_JOIN:
+        return createFullOuterHashJoinPlan(context, plan, leftExec, rightExec);
 
-        case MERGE_JOIN:
-          return createFullOuterMergeJoinPlan(context, plan, leftExec, rightExec);
+      case MERGE_JOIN:
+        return createFullOuterMergeJoinPlan(context, plan, leftExec, rightExec);
 
-        default:
-          LOG.error("Invalid Full Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
-          return createFullOuterMergeJoinPlan(context, plan, leftExec, rightExec);
+      default:
+        LOG.error("Invalid Full Outer Join Algorithm Enforcer: " + algorithm.name());
+        LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
+        return createFullOuterMergeJoinPlan(context, plan, leftExec, rightExec);
       }
     } else {
       return createBestFullOuterJoinPlan(context, plan, leftExec, rightExec);
@@ -335,10 +380,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
   }
 
   private FullOuterHashJoinExec createFullOuterHashJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                                            PhysicalExec leftExec, PhysicalExec rightExec)
-      throws IOException {
-    String [] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
-    String [] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
+      PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+    String[] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
+    String[] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
     long outerSize2 = estimateSizeRecursive(context, leftLineage);
     long innerSize2 = estimateSizeRecursive(context, rightLineage);
 
@@ -353,29 +397,28 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       selectedLeft = rightExec;
       selectedRight = leftExec;
     }
-    LOG.info("Full Outer Join (" + plan.getPID() +") chooses [Hash Join]");
+    LOG.info("Full Outer Join (" + plan.getPID() + ") chooses [Hash Join]");
     return new FullOuterHashJoinExec(context, plan, selectedRight, selectedLeft);
   }
 
   private FullOuterMergeJoinExec createFullOuterMergeJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                                              PhysicalExec leftExec, PhysicalExec rightExec)
-      throws IOException {
+      PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
     // if size too large, full outer merge join implementation
-    LOG.info("Full Outer Join (" + plan.getPID() +") chooses [Merge Join]");
-    SortSpec[][] sortSpecs3 = PlannerUtil.getSortKeysFromJoinQual(plan.getJoinQual(),
-        leftExec.getSchema(), rightExec.getSchema());
-    ExternalSortExec outerSort3 = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID,sortSpecs3[0], leftExec.getSchema(), leftExec.getSchema()), leftExec);
-    ExternalSortExec innerSort3 = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID,sortSpecs3[1], rightExec.getSchema(), rightExec.getSchema()), rightExec);
+    LOG.info("Full Outer Join (" + plan.getPID() + ") chooses [Merge Join]");
+    SortSpec[][] sortSpecs3 = PlannerUtil.getSortKeysFromJoinQual(plan.getJoinQual(), leftExec.getSchema(),
+        rightExec.getSchema());
+    ExternalSortExec outerSort3 = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs3[0],
+        leftExec.getSchema(), leftExec.getSchema()), leftExec);
+    ExternalSortExec innerSort3 = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs3[1],
+        rightExec.getSchema(), rightExec.getSchema()), rightExec);
 
     return new FullOuterMergeJoinExec(context, plan, outerSort3, innerSort3, sortSpecs3[0], sortSpecs3[1]);
   }
 
-  private PhysicalExec createBestFullOuterJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                                   PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    String [] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
-    String [] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
+  private PhysicalExec createBestFullOuterJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    String[] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
+    String[] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
     long outerSize2 = estimateSizeRecursive(context, leftLineage);
     long innerSize2 = estimateSizeRecursive(context, rightLineage);
     final long threshold = 1048576 * 128;
@@ -386,8 +429,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     }
   }
 
-  private PhysicalExec createCrossJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                           PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+  private PhysicalExec createCrossJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, plan);
 
@@ -395,16 +438,16 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
 
       switch (algorithm) {
-        case NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Nested Loop Join]");
-          return new NLJoinExec(context, plan, leftExec, rightExec);
-        case BLOCK_NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Block Nested Loop Join]");
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
-        default:
-          // fallback algorithm
-          LOG.error("Invalid Cross Join Algorithm Enforcer: " + algorithm.name());
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
+      case NESTED_LOOP_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Nested Loop Join]");
+        return new NLJoinExec(context, plan, leftExec, rightExec);
+      case BLOCK_NESTED_LOOP_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Block Nested Loop Join]");
+        return new BNLJoinExec(context, plan, leftExec, rightExec);
+      default:
+        // fallback algorithm
+        LOG.error("Invalid Cross Join Algorithm Enforcer: " + algorithm.name());
+        return new BNLJoinExec(context, plan, leftExec, rightExec);
       }
 
     } else {
@@ -412,8 +455,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     }
   }
 
-  private PhysicalExec createInnerJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                           PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
+  private PhysicalExec createInnerJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, plan);
 
@@ -421,36 +464,52 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
 
       switch (algorithm) {
-        case NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Nested Loop Join]");
-          return new NLJoinExec(context, plan, leftExec, rightExec);
-        case BLOCK_NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Block Nested Loop Join]");
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
-        case IN_MEMORY_HASH_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [In-memory Hash Join]");
-          return new HashJoinExec(context, plan, leftExec, rightExec);
-        case MERGE_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Sort Merge Join]");
-          return createMergeJoin(context, plan, leftExec, rightExec);
-        case HYBRID_HASH_JOIN:
+      case NESTED_LOOP_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Nested Loop Join]");
+        return new NLJoinExec(context, plan, leftExec, rightExec);
+      case BLOCK_NESTED_LOOP_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Block Nested Loop Join]");
+        return new BNLJoinExec(context, plan, leftExec, rightExec);
+      case IN_MEMORY_HASH_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [In-memory Hash Join]");
+        return new HashJoinExec(context, plan, leftExec, rightExec);
+      case MERGE_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Sort Merge Join]");
+        return createMergeJoin(context, plan, leftExec, rightExec);
+      case HYBRID_HASH_JOIN:
+        LOG.info("Join (" + plan.getPID() + ") chooses [Hybrid Hash Join]");
 
-        default:
-          LOG.error("Invalid Inner Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback inner join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
-          return createMergeJoin(context, plan, leftExec, rightExec);
+        String[] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
+        String[] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
+        long leftSize = estimateSizeRecursive(context, leftLineage);
+        long rightSize = estimateSizeRecursive(context, rightLineage);
+
+        PhysicalExec selectedOuter;
+        PhysicalExec selectedInner;
+        if (leftSize <= rightSize) {
+          selectedInner = leftExec;
+          selectedOuter = rightExec;
+        } else {
+          selectedInner = rightExec;
+          selectedOuter = leftExec;
+        }
+
+        return new HybridHashJoinExec(context, plan, selectedOuter, selectedInner);
+      default:
+        LOG.error("Invalid Inner Join Algorithm Enforcer: " + algorithm.name());
+        LOG.error("Choose a fallback inner join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
+        return createMergeJoin(context, plan, leftExec, rightExec);
       }
-
 
     } else {
       return createBestInnerJoinPlan(context, plan, leftExec, rightExec);
     }
   }
 
-  private PhysicalExec createBestInnerJoinPlan(TaskAttemptContext context, JoinNode plan,
-                                               PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    String [] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
-    String [] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
+  private PhysicalExec createBestInnerJoinPlan(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    String[] leftLineage = PlannerUtil.getLineage(plan.getLeftChild());
+    String[] rightLineage = PlannerUtil.getLineage(plan.getRightChild());
     long leftSize = estimateSizeRecursive(context, leftLineage);
     long rightSize = estimateSizeRecursive(context, rightLineage);
 
@@ -474,52 +533,49 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         selectedOuter = leftExec;
       }
 
-      LOG.info("Join (" + plan.getPID() +") chooses [InMemory Hash Join]");
+      LOG.info("Join (" + plan.getPID() + ") chooses [InMemory Hash Join]");
       return new HashJoinExec(context, plan, selectedOuter, selectedInner);
     } else {
       return createMergeJoin(context, plan, leftExec, rightExec);
     }
   }
 
-  private MergeJoinExec createMergeJoin(TaskAttemptContext context, JoinNode plan,
-                                        PhysicalExec leftExec, PhysicalExec rightExec) throws IOException {
-    SortSpec[][] sortSpecs = PlannerUtil.getSortKeysFromJoinQual(
-        plan.getJoinQual(), leftExec.getSchema(), rightExec.getSchema());
-    ExternalSortExec outerSort = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID, sortSpecs[0], leftExec.getSchema(), leftExec.getSchema()),
-        leftExec);
-    ExternalSortExec innerSort = new ExternalSortExec(context, sm,
-        new SortNode(UNGENERATED_PID, sortSpecs[1], rightExec.getSchema(), rightExec.getSchema()),
-        rightExec);
+  private MergeJoinExec createMergeJoin(TaskAttemptContext context, JoinNode plan, PhysicalExec leftExec,
+      PhysicalExec rightExec) throws IOException {
+    SortSpec[][] sortSpecs = PlannerUtil.getSortKeysFromJoinQual(plan.getJoinQual(), leftExec.getSchema(),
+        rightExec.getSchema());
+    ExternalSortExec outerSort = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs[0],
+        leftExec.getSchema(), leftExec.getSchema()), leftExec);
+    ExternalSortExec innerSort = new ExternalSortExec(context, sm, new SortNode(UNGENERATED_PID, sortSpecs[1],
+        rightExec.getSchema(), rightExec.getSchema()), rightExec);
 
-    LOG.info("Join (" + plan.getPID() +") chooses [Merge Join]");
+    LOG.info("Join (" + plan.getPID() + ") chooses [Merge Join]");
     return new MergeJoinExec(context, plan, outerSort, innerSort, sortSpecs[0], sortSpecs[1]);
   }
 
-  public PhysicalExec createStorePlan(TaskAttemptContext ctx,
-                                      StoreTableNode plan, PhysicalExec subOp) throws IOException {
+  public PhysicalExec createStorePlan(TaskAttemptContext ctx, StoreTableNode plan, PhysicalExec subOp)
+      throws IOException {
     if (plan.getPartitionType() == PartitionType.HASH_PARTITION
         || plan.getPartitionType() == PartitionType.RANGE_PARTITION) {
       switch (ctx.getDataChannel().getPartitionType()) {
-        case HASH_PARTITION:
-          return new PartitionedStoreExec(ctx, sm, plan, subOp);
+      case HASH_PARTITION:
+        return new PartitionedStoreExec(ctx, sm, plan, subOp);
 
-        case RANGE_PARTITION:
-          SortExec sortExec = PhysicalPlanUtil.findExecutor(subOp, SortExec.class);
+      case RANGE_PARTITION:
+        SortExec sortExec = PhysicalPlanUtil.findExecutor(subOp, SortExec.class);
 
-          SortSpec [] sortSpecs = null;
-          if (sortExec != null) {
-            sortSpecs = sortExec.getSortSpecs();
-          } else {
-            Column[] columns = ctx.getDataChannel().getPartitionKey();
-            SortSpec specs[] = new SortSpec[columns.length];
-            for (int i = 0; i < columns.length; i++) {
-              specs[i] = new SortSpec(columns[i]);
-            }
+        SortSpec[] sortSpecs = null;
+        if (sortExec != null) {
+          sortSpecs = sortExec.getSortSpecs();
+        } else {
+          Column[] columns = ctx.getDataChannel().getPartitionKey();
+          SortSpec specs[] = new SortSpec[columns.length];
+          for (int i = 0; i < columns.length; i++) {
+            specs[i] = new SortSpec(columns[i]);
           }
+        }
 
-          return new IndexedStoreExec(ctx, sm, subOp,
-              plan.getInSchema(), plan.getInSchema(), sortSpecs);
+        return new IndexedStoreExec(ctx, sm, subOp, plan.getInSchema(), plan.getInSchema(), sortSpecs);
       }
     }
     if (plan instanceof StoreIndexNode) {
@@ -530,14 +586,14 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
   }
 
   public PhysicalExec createScanPlan(TaskAttemptContext ctx, ScanNode scanNode) throws IOException {
-    Preconditions.checkNotNull(ctx.getTable(scanNode.getCanonicalName()),
-        "Error: There is no table matched to %s", scanNode.getCanonicalName() + "(" + scanNode.getTableName() + ")");
+    Preconditions.checkNotNull(ctx.getTable(scanNode.getCanonicalName()), "Error: There is no table matched to %s",
+        scanNode.getCanonicalName() + "(" + scanNode.getTableName() + ")");
 
     Fragment[] fragments = ctx.getTables(scanNode.getCanonicalName());
     return new SeqScanExec(ctx, sm, scanNode, fragments);
   }
 
-  public PhysicalExec createGroupByPlan(TaskAttemptContext context,GroupbyNode groupbyNode, PhysicalExec subOp)
+  public PhysicalExec createGroupByPlan(TaskAttemptContext context, GroupbyNode groupbyNode, PhysicalExec subOp)
       throws IOException {
 
     Enforcer enforcer = context.getEnforcer();
@@ -553,14 +609,14 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     return createBestAggregationPlan(context, groupbyNode, subOp);
   }
 
-  private PhysicalExec createInMemoryHashAggregation(TaskAttemptContext ctx,GroupbyNode groupbyNode, PhysicalExec subOp)
+  private PhysicalExec createInMemoryHashAggregation(TaskAttemptContext ctx, GroupbyNode groupbyNode, PhysicalExec subOp)
       throws IOException {
     LOG.info("The planner chooses [Hash Aggregation]");
     return new HashAggregateExec(ctx, groupbyNode, subOp);
   }
 
-  private PhysicalExec createSortAggregation(TaskAttemptContext ctx, EnforceProperty property, GroupbyNode groupbyNode, PhysicalExec subOp)
-      throws IOException {
+  private PhysicalExec createSortAggregation(TaskAttemptContext ctx, EnforceProperty property, GroupbyNode groupbyNode,
+      PhysicalExec subOp) throws IOException {
 
     Column[] grpColumns = groupbyNode.getGroupingColumns();
     SortSpec[] sortSpecs = new SortSpec[grpColumns.length];
@@ -589,14 +645,14 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     return new SortAggregateExec(ctx, groupbyNode, sortExec);
   }
 
-  private PhysicalExec createBestAggregationPlan(TaskAttemptContext context, GroupbyNode groupbyNode,
-                                                 PhysicalExec subOp) throws IOException {
+  private PhysicalExec createBestAggregationPlan(TaskAttemptContext context, GroupbyNode groupbyNode, PhysicalExec subOp)
+      throws IOException {
     Column[] grpColumns = groupbyNode.getGroupingColumns();
     if (grpColumns.length == 0) {
       return createInMemoryHashAggregation(context, groupbyNode, subOp);
     }
 
-    String [] outerLineage = PlannerUtil.getLineage(groupbyNode.getChild());
+    String[] outerLineage = PlannerUtil.getLineage(groupbyNode.getChild());
     long estimatedSize = estimateSizeRecursive(context, outerLineage);
     final long threshold = conf.getLongVar(TajoConf.ConfVars.INMEMORY_HASH_AGGREGATION_THRESHOLD);
 
@@ -610,8 +666,8 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     }
   }
 
-  public PhysicalExec createSortPlan(TaskAttemptContext context, SortNode sortNode,
-                                     PhysicalExec child) throws IOException {
+  public PhysicalExec createSortPlan(TaskAttemptContext context, SortNode sortNode, PhysicalExec child)
+      throws IOException {
     Enforcer enforcer = context.getEnforcer();
     EnforceProperty property = getAlgorithmEnforceProperty(enforcer, sortNode);
     if (property != null) {
@@ -626,9 +682,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     return createBestSortPlan(context, sortNode, child);
   }
 
-  public SortExec createBestSortPlan(TaskAttemptContext context, SortNode sortNode,
-                                     PhysicalExec child) throws IOException {
-    String [] outerLineage = PlannerUtil.getLineage(sortNode.getChild());
+  public SortExec createBestSortPlan(TaskAttemptContext context, SortNode sortNode, PhysicalExec child)
+      throws IOException {
+    String[] outerLineage = PlannerUtil.getLineage(sortNode.getChild());
     long estimatedSize = estimateSizeRecursive(context, outerLineage);
     final long threshold = 1048576 * 2000;
 
@@ -641,24 +697,19 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     }
   }
 
-  public PhysicalExec createIndexScanExec(TaskAttemptContext ctx,
-                                          IndexScanNode annotation)
-      throws IOException {
-    //TODO-general Type Index
-    Preconditions.checkNotNull(ctx.getTable(annotation.getCanonicalName()),
-        "Error: There is no table matched to %s", annotation.getCanonicalName());
+  public PhysicalExec createIndexScanExec(TaskAttemptContext ctx, IndexScanNode annotation) throws IOException {
+    // TODO-general Type Index
+    Preconditions.checkNotNull(ctx.getTable(annotation.getCanonicalName()), "Error: There is no table matched to %s",
+        annotation.getCanonicalName());
 
     Fragment[] fragments = ctx.getTables(annotation.getTableName());
 
-    String indexName = IndexUtil.getIndexNameOfFrag(fragments[0],
-        annotation.getSortKeys());
+    String indexName = IndexUtil.getIndexNameOfFrag(fragments[0], annotation.getSortKeys());
     Path indexPath = new Path(sm.getTablePath(annotation.getTableName()), "index");
 
-    TupleComparator comp = new TupleComparator(annotation.getKeySchema(),
-        annotation.getSortKeys());
-    return new BSTIndexScanExec(ctx, sm, annotation, fragments[0], new Path(
-        indexPath, indexName), annotation.getKeySchema(), comp,
-        annotation.getDatum());
+    TupleComparator comp = new TupleComparator(annotation.getKeySchema(), annotation.getSortKeys());
+    return new BSTIndexScanExec(ctx, sm, annotation, fragments[0], new Path(indexPath, indexName),
+        annotation.getKeySchema(), comp, annotation.getDatum());
 
   }
 
